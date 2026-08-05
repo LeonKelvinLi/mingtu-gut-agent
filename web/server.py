@@ -330,9 +330,39 @@ class ChatHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/chat":
             return self._chat()
+        if path == "/api/chat/stream":
+            return self._chat_stream()
         if path == "/api/speak":
             return self._speak()
         self._fail(HTTPStatus.NOT_FOUND, "接口不存在。")
+
+    def _chat_stream(self):
+        """SSE 流式作答。每句先过合规闸门再发出，见 agent/stream.py。"""
+        data, problem = self._read_json()
+        if problem:
+            return self._fail(HTTPStatus.BAD_REQUEST, problem)
+        message = (data.get("message") or "").strip()
+        if not message:
+            return self._fail(HTTPStatus.BAD_REQUEST, "请先输入内容。")
+        history = data.get("history") or []
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def emit(kind, payload):
+            blob = json.dumps({"kind": kind, "payload": payload}, ensure_ascii=False)
+            self.wfile.write(f"data: {blob}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            for kind, payload in SERVICE.agent.answer_stream(message, history):
+                emit(kind, payload)
+        except Exception:
+            emit("done", {"answer": "这一轮没能生成回答，请再问一次。", "sources": []})
+        emit("end", {})
 
     def _speak(self):
         """朗读。本地模式下不提供——朗读必然要把内容发到外部服务。"""

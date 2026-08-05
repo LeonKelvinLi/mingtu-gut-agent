@@ -521,6 +521,26 @@ def stream_generate(system, messages, max_tokens=2000):
                 pass
         return
 
+    if provider == "openai":
+        # 真流式。少了这段，SSE 端点看起来在流，实际是等整段生成完再一次性吐出，
+        # 首字延迟等于总耗时——流式的全部意义就没了。
+        try:
+            stream = _openai().chat.completions.create(
+                model=OPENAI_MODEL,
+                max_completion_tokens=max_tokens,
+                stream=True,
+                messages=[{"role": "system", "content": system}] + messages,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                piece = chunk.choices[0].delta.content
+                if piece:
+                    yield piece
+            return
+        except Exception:
+            pass
+
     text = generate(system, messages, max_tokens=max_tokens)
     if text:
         yield text

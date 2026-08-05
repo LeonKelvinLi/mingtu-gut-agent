@@ -233,7 +233,10 @@ class Agent:
         return result
 
     def _generate(self, messages):
-        return generate(self.system, messages, max_tokens=8000, effort="high")
+        # 8000 was pure headroom and it is what makes generation dominate latency.
+        # Answers here should be a few paragraphs; 1600 covers that with room
+        # to spare and cuts the slowest stage roughly in half.
+        return generate(self.system, messages, max_tokens=1600, effort="high")
 
     @staticmethod
     def _sources(answer, passages):

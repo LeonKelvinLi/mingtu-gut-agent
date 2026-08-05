@@ -82,7 +82,13 @@
   .tool.playing{background:#e4ecff;border-color:#8fabf0}
 
   .srcs{margin-top:12px;padding-top:11px;border-top:1px dashed rgba(20,40,90,.13)}
-  .srcs h3{margin:0 0 8px;font-size:11.5px;font-weight:600;color:#7b88a6;letter-spacing:.5px}
+  .srcs summary{list-style:none;cursor:pointer;font-size:11.5px;font-weight:600;color:#7b88a6;
+    display:flex;align-items:center;gap:6px;user-select:none;padding:2px 0}
+  .srcs summary::-webkit-details-marker{display:none}
+  .srcs summary:hover{color:#46527a}
+  .srcs summary .chev{transition:transform .15s;font-size:9px;color:#a3adc4}
+  .srcs[open] summary .chev{transform:rotate(90deg)}
+  .srcs .list{margin-top:6px}
   .src{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;color:#46527a;
     padding:5px 0;line-height:1.6}
   .src .n{flex:none;width:18px;height:18px;border-radius:5px;background:#eaefff;color:#4759a8;
@@ -193,18 +199,21 @@
 
   function sources(list){
     if(!list||!list.length)return "";
-    var h='<div class="srcs"><h3>依据</h3>';
+    // Collapsed by default: the citations are what make this trustworthy,
+    // but showing eight of them by default buries the actual answer.
+    var h='<details class="srcs"><summary><span class="chev">&#9654;</span>'
+        + '依据 '+list.length+' 条</summary><div class="list">';
     list.forEach(function(s){
       var g=s.is_live?"live":(s.grade||"none");
       var label=s.is_live?"实时":(s.grade||"未标注");
-      var title=esc(s.heading||s.title||"资料");
-      var link=(s.citations&&s.citations[0])||s.url||"";
+      var title=esc(s.heading||s.doc||"资料");
+      var link=(s.links&&s.links[0]&&s.links[0].url)||(s.citations&&s.citations[0])||s.url||"";
       h+='<div class="src"><span class="n">'+esc(s.n)+'</span><span class="badge '+esc(g)+'">'
         +esc(label)+'</span><span>'
         +(link?'<a href="'+esc(link)+'" target="_blank" rel="noopener">'+title+'</a>':title)
         +'</span></div>';
     });
-    return h+"</div>";
+    return h+"</div></details>";
   }
 
   function devinfo(st){
@@ -261,18 +270,48 @@
     var b=row("bot");
     b.innerHTML='<div class="typing"><i></i><i></i><i></i></div>';
 
-    fetch("/api/chat",{method:"POST",headers:{"content-type":"application/json"},
+    var acc="", meta={}, started=false;
+    function paint(final){
+      b.innerHTML=(meta.escalated?'<div class="alarmtag">建议尽快就医</div>':"")
+        +'<div class="body">'+render(acc)+"</div>"
+        +(final?sources(final.sources)+devinfo(final.stats):"");
+      if(final&&acc.length>12)attachAudio(b,acc);
+      stream.scrollTop=stream.scrollHeight;
+    }
+
+    fetch("/api/chat/stream",{method:"POST",headers:{"content-type":"application/json"},
       body:JSON.stringify({message:text,history:history})})
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if(d.escalated)b.parentNode.classList.add("alarm");
-        var answer=d.answer||d.message||"这一轮没能给出回答，请再问一次。";
-        b.innerHTML=(d.escalated?'<div class="alarmtag">建议尽快就医</div>':"")
-          +'<div class="body">'+render(answer)+"</div>"
-          +sources(d.sources)+devinfo(d.stats);
-        if(answer.length>12)attachAudio(b,answer);
+      .then(function(r){
+        if(!r.ok||!r.body)throw 0;
+        var reader=r.body.getReader(), dec=new TextDecoder(), buf="";
+        function pump(){
+          return reader.read().then(function(res){
+            if(res.done)return;
+            buf+=dec.decode(res.value,{stream:true});
+            var parts=buf.split("\n\n"); buf=parts.pop();
+            parts.forEach(function(chunk){
+              var line=chunk.replace(/^data: /,"").trim();
+              if(!line)return;
+              var ev; try{ev=JSON.parse(line);}catch(e){return;}
+              if(ev.kind==="meta"){meta=ev.payload||{};}
+              else if(ev.kind==="delta"){
+                if(!started){started=true;b.innerHTML="";}
+                acc+=ev.payload; paint(null);
+              } else if(ev.kind==="replace"){
+                acc=ev.payload.answer||""; paint({sources:ev.payload.sources,stats:null});
+              } else if(ev.kind==="done"){
+                acc=ev.payload.answer||acc; paint({sources:ev.payload.sources,stats:null});
+              }
+            });
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .then(function(){
+        if(!acc){b.textContent="这一轮没能生成回答，请再问一次。";return;}
         history.push({role:"user",content:text});
-        history.push({role:"assistant",content:answer});
+        history.push({role:"assistant",content:acc});
         if(history.length>12)history=history.slice(-12);
       })
       .catch(function(){b.textContent="连接不上服务，请稍后再试。";})
