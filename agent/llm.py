@@ -28,6 +28,8 @@ OLLAMA_FAST_MODEL = os.environ.get("MINGTU_FAST_MODEL", "qwen3:4b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 GEMINI_MODEL = os.environ.get("MINGTU_GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_FALLBACK = "gemini-2.5-flash"
+# 分流与重排是机械任务，用 lite 档即可，两个阶段合计能省约 7 秒。
+GEMINI_FAST_MODEL = os.environ.get("MINGTU_GEMINI_FAST", "gemini-3.1-flash-lite")
 
 # 默认全本地。用户的健康问题不出本机，规避《个人信息保护法》下的数据出境问题。
 # 需要调用云端模型时显式设置 MINGTU_LOCAL_ONLY=0。
@@ -164,7 +166,7 @@ def _strip_unsupported(node):
     return node
 
 
-def _gemini_chat(system, messages, max_tokens, schema=None):
+def _gemini_chat(system, messages, max_tokens, schema=None, fast=False):
     """Gemini uses systemInstruction plus role user/model turns."""
     key = _read_key("GEMINI_API_KEY")
     if not key:
@@ -188,7 +190,8 @@ def _gemini_chat(system, messages, max_tokens, schema=None):
 
     # Fall back down the model ladder on rate limits — the free tier throttles
     # the strongest model first, and a throttled demo looks like a broken one.
-    for model in (GEMINI_MODEL, GEMINI_FALLBACK):
+    ladder = (GEMINI_FAST_MODEL, GEMINI_MODEL) if fast else (GEMINI_MODEL, GEMINI_FALLBACK)
+    for model in ladder:
         try:
             proc = subprocess.run(
                 ["curl", "-sS", "--max-time", "180", "-X", "POST",
@@ -367,7 +370,7 @@ def call_json(system, user, schema, effort="low", max_tokens=4096, fast=False):
         text = _gemini_chat(
             system + "\n\n只输出一个 JSON 对象，不要解释、不要代码块标记。必须符合此 Schema："
             + json.dumps(schema, ensure_ascii=False),
-            [{"role": "user", "content": user}], max_tokens, schema=schema)
+            [{"role": "user", "content": user}], max_tokens, schema=schema, fast=fast)
         if not text:
             return None
         return _loose_json(text)

@@ -73,10 +73,13 @@
     text-align:center;line-height:17px;vertical-align:1px}
 
   .tools{margin-top:11px;display:flex;gap:8px;align-items:center}
-  .tool{font:inherit;font-size:11.5px;color:#5f6d8f;background:#f2f5fc;border:1px solid rgba(20,40,90,.09);
-    border-radius:8px;padding:4px 10px;cursor:pointer;transition:background .15s}
-  .tool:hover{background:#e7edfa}
-  .tool[disabled]{opacity:.5;cursor:default}
+  .tool{font:inherit;font-size:12.5px;font-weight:550;color:#3f5bb8;background:#eef3ff;
+    border:1px solid #c9d8fb;border-radius:20px;padding:6px 14px 6px 10px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;transition:background .15s,border-color .15s}
+  .tool:hover{background:#dfe8ff;border-color:#a9c0f5}
+  .tool[disabled]{opacity:.55;cursor:default}
+  .tool svg{width:15px;height:15px;flex:none;fill:currentColor}
+  .tool.playing{background:#e4ecff;border-color:#8fabf0}
 
   .srcs{margin-top:12px;padding-top:11px;border-top:1px dashed rgba(20,40,90,.13)}
   .srcs h3{margin:0 0 8px;font-size:11.5px;font-weight:600;color:#7b88a6;letter-spacing:.5px}
@@ -215,23 +218,37 @@
     return '<div class="dev">'+esc(b.join(" · "))+"</div>";
   }
 
+  var ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a6.8 6.8 0 0 1 0 13.4v2.1a8.9 8.9 0 0 0 0-17.6z"/></svg>';
+  var ICON_STOP = '<svg viewBox="0 0 24 24"><path d="M7 6h4v12H7zm6 0h4v12h-4z"/></svg>';
+
   function attachAudio(bubble,text){
     var bar=document.createElement("div");bar.className="tools";
-    var btn=document.createElement("button");btn.className="tool";btn.textContent="朗读";
+    var btn=document.createElement("button");btn.className="tool";
+    btn.innerHTML=ICON_PLAY+"<span>朗读</span>";
+    function reset(){btn.className="tool";btn.innerHTML=ICON_PLAY+"<span>朗读</span>";}
     btn.onclick=function(){
-      if(player&&!player.paused){player.pause();player=null;btn.textContent="朗读";return;}
-      btn.disabled=true;btn.textContent="准备中";
+      if(player&&!player.paused){player.pause();player=null;reset();return;}
+      btn.disabled=true;btn.innerHTML=ICON_PLAY+"<span>生成语音…</span>";
       fetch("/api/speak",{method:"POST",headers:{"content-type":"application/json"},
         body:JSON.stringify({text:text})})
-        .then(function(r){if(!r.ok)throw 0;return r.blob();})
+        .then(function(r){
+          if(r.status===503)throw new Error("本地模式已关闭朗读");
+          if(!r.ok)throw new Error("语音服务暂时不可用");
+          return r.blob();
+        })
         .then(function(blob){
           if(player)player.pause();
           player=new Audio(URL.createObjectURL(blob));
-          btn.disabled=false;btn.textContent="暂停";
-          player.onended=function(){btn.textContent="朗读";player=null;};
-          player.play();
+          btn.disabled=false;btn.className="tool playing";
+          btn.innerHTML=ICON_STOP+"<span>停止</span>";
+          player.onended=function(){player=null;reset();};
+          return player.play();
         })
-        .catch(function(){btn.disabled=false;btn.textContent="朗读不可用";});
+        .catch(function(e){
+          btn.disabled=false;
+          btn.innerHTML=ICON_PLAY+"<span>"+(e&&e.message?e.message:"朗读失败")+"</span>";
+          setTimeout(reset,3000);
+        });
     };
     bar.appendChild(btn);bubble.appendChild(bar);
   }
@@ -253,7 +270,7 @@
         b.innerHTML=(d.escalated?'<div class="alarmtag">建议尽快就医</div>':"")
           +'<div class="body">'+render(answer)+"</div>"
           +sources(d.sources)+devinfo(d.stats);
-        if(answer.length>40)attachAudio(b,answer);
+        if(answer.length>12)attachAudio(b,answer);
         history.push({role:"user",content:text});
         history.push({role:"assistant",content:answer});
         if(history.length>12)history=history.slice(-12);
