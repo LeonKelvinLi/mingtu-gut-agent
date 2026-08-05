@@ -63,6 +63,12 @@ def classify(query):
         fast=True,
     )
 
+    # _loose_json 现在也接受裸数组（重排需要），所以这里必须校验类型：
+    # 模型偶尔会给 classify 返回一个数组，直接当 dict 用会 500。
+    # 形状不对就走确定性兜底，这本来就是兜底存在的意义。
+    if not isinstance(result, dict):
+        result = None
+
     if result is None:
         # Deterministic fallback — retrieval and safety still work.
         filters = infer_filters(query)
