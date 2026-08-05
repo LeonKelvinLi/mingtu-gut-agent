@@ -56,3 +56,10 @@ knowledge/
 .DS_Store
 .idea/
 .vscode/
+
+# 例外：云端部署需要索引已经在仓库里。
+# Render 免费实例的构建阶段跑不完 762 次向量化（额度限速 + 构建超时），
+# 所以 Gemini 这一套索引必须随仓库走。本地 bge-m3 那套仍然忽略：
+# 本地部署本来就要装 ollama，顺手重建索引即可，不必让 3MB 二进制进版本库。
+!knowledge/chunks.jsonl
+!knowledge/vectors-gemini_*.npy
