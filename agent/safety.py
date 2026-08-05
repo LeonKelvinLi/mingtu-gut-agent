@@ -104,9 +104,45 @@ def screen_input(text):
     return hits, REFERRAL_INSTRUCTION.format(flags="、".join(hits))
 
 
+# 纯知识性提问的框架。只有确证是在问知识、且没有求助意味时才降级。
+_KNOWLEDGE_FRAME = re.compile(
+    r"是什么原因|是什么意思|为什么会|怎么形成|"
+    r"科普|网上说|听说|新闻说|文章说|书上说|"
+    r"一般(是|由|来说)|通常(是|由)|医学上|临床上|"
+    r"(是不是|算不算)[^。！？]{0,10}(吗|呢)$"
+)
+# 求助意味：出现这些就算带着问句框架也不能降级。
+_HELP_SEEKING = re.compile(r"怎么办|该怎么|要不要|需不需要|急|严重吗|要紧吗|危险吗|吓|担心|害怕")
+# 第三人称转述。仍然要升级（家人确实该就诊），但话术得换称谓。
+_THIRD_PERSON = re.compile(
+    r"我(妈|爸|母亲|父亲|老婆|老公|妻子|丈夫|儿子|女儿|孩子|奶奶|爷爷|外婆|外公|哥|姐|弟|妹|朋友|同事)|"
+    r"妈妈|爸爸|母亲|父亲|老婆|老公|妻子|丈夫|儿子|女儿|孩子|宝宝|"
+    r"奶奶|爷爷|外婆|外公|婆婆|公公|家(里)?人|亲戚|朋友|同事|他|她"
+)
+
+
 def mentions_self(text):
-    """True when the message reads as first-person symptom reporting."""
-    return bool(_FIRST_PERSON.search(text))
+    """这条消息是不是在描述某个人身上真实发生的症状。
+
+    中文是主语脱落语言：「便血三天了」「拉血了」「黑便两天」「吐血了怎么办」
+    都不含任何人称词。原来靠「有没有出现我/最近/一直」来判断，结果是
+    真人自述被降级成一般咨询，走完整作答管线，一句就医提示都没有——
+    这是这套系统里后果最严重的一类漏判。
+
+    所以判定方向反过来：命中报警症状时**默认按自述处理**，
+    只有能确证是在问知识、且不带求助意味时才降级。
+    宁可多给一次就医提示，不能漏掉一次真实求助。
+    """
+    if _THIRD_PERSON.search(text) or _FIRST_PERSON.search(text):
+        return True
+    if _KNOWLEDGE_FRAME.search(text) and not _HELP_SEEKING.search(text):
+        return False
+    return True
+
+
+def is_third_person(text):
+    """症状是别人的（家人、朋友），话术要换称谓。"""
+    return bool(_THIRD_PERSON.search(text)) and not re.search(r"^我[^妈爸母父老儿女孩奶爷外哥姐弟妹朋同]", text)
 
 
 # --- Gate 2: 违规宣称 (prohibited health claims) ------------------------------

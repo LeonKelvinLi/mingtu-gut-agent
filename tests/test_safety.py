@@ -193,10 +193,24 @@ def test_multiple_flags_are_all_reported():
 
 
 def test_mentions_self_separates_report_from_question():
+    """判定方向是「默认按自述，确证是问知识才降级」。
+
+    原来反过来——靠句子里有没有「我/最近/一直」来认自述。中文是主语脱落语言，
+    「便血三天了」「拉血了」「黑便两天」全都不含人称词，于是真人求助被降级成
+    一般咨询，走完整作答管线，一句就医提示都没有。这是全系统后果最重的漏判，
+    所以这里的期望值是刻意反过来的：宁可多给一次就医提示，不能漏一次真实求助。
+    """
     assert safety.mentions_self("我最近大便带血")
     assert safety.mentions_self("这几天一直拉肚子")
+    # 主语脱落的真人自述：必须按自述处理
+    assert safety.mentions_self("便血三天了")
+    assert safety.mentions_self("大便有血，怎么回事")
+    assert safety.mentions_self("黑便两天")
+    # 明确的知识性提问、且不带求助意味：才降级
     assert not safety.mentions_self("便血一般是什么原因")
-    assert not safety.mentions_self("黑便是怎么回事")
+    assert not safety.mentions_self("黑便是什么意思")
+    # 带求助意味的问句不降级
+    assert safety.mentions_self("便血是什么原因，严重吗")
 
 
 # --- The escalate-only merge (design constraint 1) ----------------------------
