@@ -112,14 +112,35 @@ def mentions_self(text):
 # --- Gate 2: 违规宣称 (prohibited health claims) ------------------------------
 # 《广告法》第十七条：非医疗广告不得涉及疾病治疗功能。
 # 《食品安全法》第七十三条：食品广告不得涉及疾病预防、治疗功能。
+# 主语词：食品/益生菌类。把疾病功能归给这些主语才是法规禁止的宣称。
+_SUBJ = r"(?:益生菌|益生元|合生元|本品|该品|该产品|这款|这个|这些|那个|产品|菌株|菌种|酸奶|发酵乳|保健食品|膳食补充剂|它)"
+# 疾病/症状词：不能只认「病癌症炎」四个字，本领域最高频的恰恰是腹泻便秘感染复发。
+_DISEASE = (r"(?:病|癌|症|炎|感染|腹泻|便秘|胀气|口臭|湿疹|过敏|复发|溃疡|息肉|"
+            r"肿瘤|幽门螺杆菌|肠易激|克罗恩|脂肪肝|糖尿病|肥胖|失眠|焦虑|抑郁)")
+
 BANNED_CLAIMS = [
-    (r"(治疗|治愈|根治|痊愈|药到病除)", "宣称疾病治疗/治愈功能"),
-    (r"预防(?!接种)[^。！？\n]{0,8}(病|癌|症|炎)", "宣称疾病预防功能"),
-    (r"(替代|代替)[^。！？\n]{0,6}(药物|药品|治疗|就医)", "宣称可替代药物或就医"),
-    (r"(无|没有|零)[^。！？\n]{0,4}(副作用|毒副作用)", "宣称无副作用"),
-    (r"100%|百分之百|绝对(有效|安全)|保证(有效|治好)", "绝对化用语"),
-    (r"(特效|神效|秘方|奇效)", "夸大功效用语"),
-    (r"最(好|佳|强|有效)的(益生菌|产品|菌株)", "绝对化最高级用语"),
+    # 治疗类：必须带主语。裸「治疗」在这个产品里是绕不开的正当表述
+    # （「接受规范治疗」「治疗方案由医生决定」），一刀切会把就医导航本身拦死。
+    (rf"{_SUBJ}[^。！？；，,、\n]{{0,12}}(治疗|治愈|根治|治好|断根|除根|痊愈|药到病除|主治)",
+     "宣称疾病治疗/治愈功能"),
+    (r"(治疗|治愈|根治|治好)[^。！？；\n]{0,6}(作用|功效|效果|能力)",
+     "宣称疾病治疗/治愈功能"),
+    # 口语化的疗效断言。书面语词表漏掉的正是用户和商家真正会说的话。
+    (r"(疗效|有效率|治愈率|见效快|立竿见影|永不复发|不再复发|彻底好了|根除病根|断根|除根|治好了)",
+     "宣称疗效"),
+    # 预防类：正序 + 反序 + 防癌抗癌单列。宾语不限于「病癌症炎」四个字。
+    (rf"(预防|防治|抵御|防止)(?!接种)[^。！？；，,、\n]{{0,10}}{_DISEASE}",
+     "宣称疾病预防功能"),
+    (rf"{_DISEASE}[^。！？；，,、\n]{{0,8}}(预防|防护)(作用|效果|功能)",
+     "宣称疾病预防功能"),
+    (r"(防癌|抗癌|抑癌|抗肿瘤|防肿瘤|抑制肿瘤)", "宣称抗癌功能"),
+    (r"(替代|代替|不用再吃|不必吃)[^。！？；\n]{0,6}(药物|药品|药|治疗|就医|看医生)",
+     "宣称可替代药物或就医"),
+    (r"(无|没有|零|不含)[^。！？；\n]{0,4}(副作用|毒副作用|依赖性)", "宣称无副作用"),
+    (r"100%|百分之百|绝对(有效|安全|放心)|保证(有效|治好|见效)|包治|人人有效",
+     "绝对化用语"),
+    (r"(特效|神效|秘方|奇效|神药|圣品)", "夸大功效用语"),
+    (r"最(好|佳|强|有效|顶级)的?(益生菌|产品|菌株|品牌)", "绝对化最高级用语"),
 ]
 
 # 允许的语境：引用法规原文、说明什么是违法宣称、或明确否定该宣称时不算违规。
@@ -154,21 +175,70 @@ def screen_output(text):
     behaviour, not a breach.
     """
     violations = []
-    for sentence in re.split(r"(?<=[。！？\n])", text):
+    for sentence in re.split(r"(?<=[。！？；;.!?\n])", text):
         if not sentence.strip():
             continue
-        if _NEGATED.search(sentence):
-            continue
-        # 临床语境下的「治疗」不是宣称，见 _CLINICAL_CONTEXT 注释。
-        clinical = bool(_CLINICAL_CONTEXT.search(sentence))
         for pattern, reason in BANNED_CLAIMS:
-            m = re.search(pattern, sentence)
-            if not m:
-                continue
-            if clinical and reason == "宣称疾病治疗/治愈功能":
-                continue
-            violations.append((m.group(0), reason, sentence.strip()))
+            for m in re.finditer(pattern, sentence):
+                # 临床豁免同样要限定在违规词所在的分句：整句豁免会让
+                # 「不能替代药物，本品可以根治肠癌」的后半句蹭到前半句的免罪符。
+                if reason.startswith("宣称疾病治疗") and _clinical_for(sentence, m):
+                    continue
+                # 否定必须作用在这个违规词上，而不是「同一句里出现过否定词」。
+                # 原来的整句作用域等于给了一个万能开关：只要句子里有任意否定词，
+                # 同句所有违规宣称一起被放行——一句话塞五条违规也能全身而退。
+                if _negated_for(sentence, m):
+                    continue
+                term = next((g for g in reversed(m.groups() or ()) if g), m.group(0))
+                violations.append((term, reason, sentence.strip()))
+                break          # 同一条规则在一句里只报一次
     return violations
+
+
+# 否定词的作用半径：只看违规词前面这么多字，且不跨越分句边界。
+_NEGATION_WINDOW = 14
+# 元语境：句子在讲「这种说法违法/不合规」，而不是在做这种说法。
+_META_CONTEXT = re.compile(
+    r"违法|违规|不合规|不得|禁止|不允许|属于虚假|涉嫌|监管|法规|广告法|食品安全法|"
+    r"这类(说法|宣称|表述)|不能宣称|不应宣称")
+_CLAUSE_BREAK = re.compile(r"[，,；;。！？\n、]")
+
+
+def _negated_for(sentence, m):
+    """判断这个违规词是否真的落在某个否定的作用域内。
+
+    两处都要看：
+      1 匹配片段内部——「益生菌不能治疗肠炎」的否定夹在主语和动词之间，
+        只看左边会漏掉，结果把一句正确的合规说明当成违规。
+      2 匹配片段左侧的一个短窗口，且不跨越逗号顿号分号——
+        「益生菌不能替代药物，本品可以根治肠癌」里的「不能」不该给后半句免罪。
+    """
+    if _NEGATED.search(m.group(0)):
+        return True
+    # 讨论「这么说是违法的」属于合规科普，不是违规宣称本身。
+    if _META_CONTEXT.search(sentence):
+        return True
+    start = m.start()
+    # 紧邻前一个字的裸否定：「不替代药物」里的「不」贴着违规词，
+    # 落在窗口之外的边界上，按窗口取会整个漏掉。
+    if start and sentence[max(0, start - 2):start].strip().endswith(("不", "无", "非", "别", "勿")):
+        return True
+    left = sentence[:start]
+    break_pos = None
+    for m in _CLAUSE_BREAK.finditer(left):
+        break_pos = m.end()
+    clause_start = break_pos if break_pos is not None else 0
+    window_start = max(clause_start, start - _NEGATION_WINDOW)
+    return bool(_NEGATED.search(left[window_start:]))
+
+
+def _clinical_for(sentence, m):
+    """违规词所在分句里是否是临床语境（医生的治疗，而非食品的功能宣称）。"""
+    left, right = sentence[:m.start()], sentence[m.end():]
+    lb = [x.end() for x in _CLAUSE_BREAK.finditer(left)]
+    rb = _CLAUSE_BREAK.search(right)
+    clause = sentence[(lb[-1] if lb else 0): m.end() + (rb.start() if rb else len(right))]
+    return bool(_CLINICAL_CONTEXT.search(clause))
 
 
 CORRECTION_INSTRUCTION = (
