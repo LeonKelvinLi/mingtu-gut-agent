@@ -246,3 +246,83 @@ class Agent:
                     "citations": (p.get("citations") or [])[:4],
                 })
         return out
+
+    # -- 流式作答 ------------------------------------------------------------
+    def answer_stream(self, query, history=None):
+        """产出 (kind, payload)：meta / delta / done。
+
+        安全边界与非流式路径完全一致：报警症状筛查在最前，缓存与急症直接一次性返回，
+        逐句合规闸门保证违规内容永远不会流到前端。闸门拦下或引用越界时，
+        自动退回非流式重写流程，前端用整段结果替换已显示的内容。
+        """
+        from agent.stream import stream_answer
+
+        flags, instruction = safety.screen_input(query)
+
+        if flags and safety.mentions_self(query):
+            yield ("meta", {"escalated": True, "cached": False})
+            yield ("done", {"answer": safety.escalation_message(flags), "sources": []})
+            return
+
+        cacheable = bool(self.cache) and (not history) and (not flags)
+        query_vector = None
+        if cacheable:
+            hit = self.cache.lookup_literal(query)
+            if hit is None:
+                try:
+                    query_vector = self.retriever._embed_query(query)
+                    hit = self.cache.lookup_semantic(query_vector)
+                except Exception:
+                    hit = None
+            if hit:
+                yield ("meta", {"escalated": False, "cached": True})
+                yield ("done", {"answer": hit["answer"], "sources": hit.get("sources", [])})
+                return
+
+        routing = classify(query)
+        if routing["risk"] == "emergency":
+            yield ("meta", {"escalated": True, "cached": False})
+            yield ("done", {"answer": safety.escalation_message(routing["red_flags"] or flags),
+                            "sources": []})
+            return
+
+        passages, used_live, _ = self.gather(query, routing)
+        yield ("meta", {"escalated": False, "cached": False,
+                        "passages": len(passages), "used_live": used_live})
+
+        if not available():
+            yield ("done", {"answer": "当前未配置模型，无法生成回答。", "sources": []})
+            return
+
+        messages = list(history or [])
+        messages.append({"role": "user",
+                         "content": f"{build_evidence_block(passages)}\n\n## 用户问题\n\n{query}"})
+        if routing.get("safety_instruction"):
+            messages.append({"role": "system", "content": routing["safety_instruction"]})
+
+        final = None
+        for kind, payload in stream_answer(self.system, messages, passages):
+            if kind == "delta":
+                yield ("delta", payload)
+            elif kind == "done":
+                final = payload
+            elif kind == "reject":
+                # 流式结果不合格：走完整重写流程，用整段替换。
+                fallback = self.answer(query, history)
+                yield ("replace", {"answer": fallback["answer"],
+                                   "sources": fallback.get("sources", [])})
+                return
+
+        if final is None:
+            fallback = self.answer(query, history)
+            yield ("replace", {"answer": fallback["answer"],
+                               "sources": fallback.get("sources", [])})
+            return
+
+        sources = self._sources(final, passages)
+        if cacheable and sources:
+            try:
+                self.cache.put(query, final, sources, query_vector)
+            except Exception:
+                pass
+        yield ("done", {"answer": final, "sources": sources})

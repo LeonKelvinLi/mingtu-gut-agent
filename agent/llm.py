@@ -434,3 +434,58 @@ def generate(system, messages, max_tokens=8000, effort="high"):
         return _perplexity_chat(system, messages, max_tokens)
 
     return None
+
+
+def stream_generate(system, messages, max_tokens=2000):
+    """逐块产出模型输出。目前只有 Gemini 走真流式，其余回退成一次性产出。
+
+    回退不是降级：调用方拿到的仍是完整正确的答案，只是没有逐字效果。
+    宁可退回一次性，也不要为了"看起来在流"而绕开合规闸门。
+    """
+    provider = active_provider()
+
+    if provider == "gemini":
+        key = _read_key("GEMINI_API_KEY")
+        contents = []
+        for msg in _fold_system_into_user(messages):
+            contents.append({"role": "model" if msg["role"] == "assistant" else "user",
+                             "parts": [{"text": msg["content"]}]})
+        payload = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_tokens},
+        }
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{GEMINI_MODEL}:streamGenerateContent?alt=sse&key={key}")
+        proc = subprocess.Popen(
+            ["curl", "-sS", "--no-buffer", "--max-time", "180", "-X", "POST", url,
+             "-H", "content-type: application/json", "--data-binary", "@-"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        try:
+            proc.stdin.write(json.dumps(payload, ensure_ascii=False))
+            proc.stdin.close()
+            for line in proc.stdout:
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                try:
+                    d = json.loads(raw)
+                except Exception:
+                    continue
+                for cand in d.get("candidates", []):
+                    for part in cand.get("content", {}).get("parts", []):
+                        if part.get("text"):
+                            yield part["text"]
+        finally:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        return
+
+    text = generate(system, messages, max_tokens=max_tokens)
+    if text:
+        yield text

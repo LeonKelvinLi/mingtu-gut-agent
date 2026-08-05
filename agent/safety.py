@@ -123,6 +123,18 @@ BANNED_CLAIMS = [
 ]
 
 # 允许的语境：引用法规原文、说明什么是违法宣称、或明确否定该宣称时不算违规。
+# 「治疗」在合法语境里出现得极多：用户正在接受的治疗、医生的治疗方案、
+# 药物治疗、根除治疗期间。法规禁止的是**把疾病治疗功能归给食品**，
+# 而不是禁止提到治疗这两个字。不做这个区分，闸门会把
+# 「治疗前提前吃」这种完全正当的句子拦下来，白白消耗重写轮次。
+_CLINICAL_CONTEXT = re.compile(
+    r"(治疗|用药)(期间|前|后|过程|方案|结束|开始|同时)|"
+    r"(根除|规范|药物|抗生素|联合|三联|四联|临床|医生|医院|正规|常规|辅助)治疗|"
+    r"(接受|配合|完成|进行|开始|结束|停止)治疗|"
+    r"治疗(的)?(同时|基础上|之外)|"
+    r"不能替代(药物|治疗|就医)|非治疗"
+)
+
 _NEGATED = re.compile(
     r"不能|不可|不得|不会|无法|禁止|违法|不合规|并非|不是|"
     r"不应|切勿|不要|谈不上|没有证据|缺乏证据|不能宣称|属于违规|"
@@ -147,10 +159,15 @@ def screen_output(text):
             continue
         if _NEGATED.search(sentence):
             continue
+        # 临床语境下的「治疗」不是宣称，见 _CLINICAL_CONTEXT 注释。
+        clinical = bool(_CLINICAL_CONTEXT.search(sentence))
         for pattern, reason in BANNED_CLAIMS:
             m = re.search(pattern, sentence)
-            if m:
-                violations.append((m.group(0), reason, sentence.strip()))
+            if not m:
+                continue
+            if clinical and reason == "宣称疾病治疗/治愈功能":
+                continue
+            violations.append((m.group(0), reason, sentence.strip()))
     return violations
 
 
