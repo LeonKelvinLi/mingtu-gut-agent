@@ -23,6 +23,7 @@
 import re
 
 from agent import safety
+from agent.cache import AnswerCache
 from agent.classify import classify, rerank
 from agent.live import needs_live, search_live
 from agent.llm import available, generate, provider_label
@@ -46,6 +47,7 @@ class Agent:
     def __init__(self, verbose=False):
         self.retriever = Retriever()
         self.system = build_system_prompt()
+        self.cache = AnswerCache()
         self.verbose = verbose
 
     # -- retrieval ----------------------------------------------------------
@@ -104,13 +106,49 @@ class Agent:
 
     # -- generation ---------------------------------------------------------
     def answer(self, query, history=None):
-        routing = classify(query)
-        result = {"routing": routing, "passages": [], "used_live": False,
-                  "repairs": 0, "answer": "", "sources": []}
+        # 1) 确定性报警症状筛查永远第一步，且必须在缓存之前。
+        #    急症输入既不查缓存也不写缓存——任何缓存都不得短路就医提示。
+        flags, instruction = safety.screen_input(query)
+        result = {"passages": [], "used_live": False, "repairs": 0,
+                  "answer": "", "sources": [], "degraded": [], "cached": False}
 
-        # Emergency short-circuits the model entirely.
+        if flags and safety.mentions_self(query):
+            result["routing"] = {"risk": "emergency", "red_flags": flags,
+                                 "_fallback": False, "populations": [],
+                                 "regulatory": False, "sub_queries": [query],
+                                 "safety_instruction": instruction}
+            result["answer"] = safety.escalation_message(flags)
+            result["escalated"] = True
+            return result
+
+        # 2) 缓存。只对首轮提问生效：追问依赖上文，同样的字面问题在不同上下文里
+        #    答案并不相同，用缓存回答追问会答非所问。
+        cacheable = (not history) and (not flags)
+        query_vector = None
+        if cacheable:
+            hit = self.cache.lookup_literal(query)
+            if hit is None:
+                try:
+                    query_vector = self.retriever._embed_query(query)
+                    hit = self.cache.lookup_semantic(query_vector)
+                except Exception:
+                    hit = None
+            if hit:
+                result.update({
+                    "answer": hit["answer"], "sources": hit.get("sources", []),
+                    "cached": True, "escalated": False,
+                    "routing": {"risk": "normal", "red_flags": [], "_fallback": False,
+                                "populations": [], "regulatory": False,
+                                "sub_queries": [query], "safety_instruction": None},
+                })
+                return result
+
+        routing = classify(query)
+        result["routing"] = routing
+
+        # 分类器只能升级风险不能降级，这里再兜一次。
         if routing["risk"] == "emergency":
-            result["answer"] = safety.escalation_message(routing["red_flags"])
+            result["answer"] = safety.escalation_message(routing["red_flags"] or flags)
             result["escalated"] = True
             return result
         result["escalated"] = False
@@ -177,6 +215,14 @@ class Agent:
 
         result["answer"] = answer
         result["sources"] = self._sources(answer, passages)
+
+        # 只缓存真正通过了引用与合规校验的答案。兜底话术、弃答、生成失败都不写入，
+        # 否则一次偶发失败会被固化成这个问题的永久标准答案。
+        if cacheable and not result.get("error") and result["sources"]:
+            try:
+                self.cache.put(query, answer, result["sources"], query_vector)
+            except Exception:
+                pass
         return result
 
     def _generate(self, messages):

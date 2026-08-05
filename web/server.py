@@ -328,9 +328,36 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path != "/api/chat":
-            return self._fail(HTTPStatus.NOT_FOUND, "接口不存在。")
-        self._chat()
+        if path == "/api/chat":
+            return self._chat()
+        if path == "/api/speak":
+            return self._speak()
+        self._fail(HTTPStatus.NOT_FOUND, "接口不存在。")
+
+    def _speak(self):
+        """朗读。本地模式下不提供——朗读必然要把内容发到外部服务。"""
+        from agent import voice
+
+        if not voice.available():
+            return self._fail(HTTPStatus.SERVICE_UNAVAILABLE, "当前部署未开启朗读功能。")
+
+        data, problem = self._read_json()
+        if problem:
+            return self._fail(HTTPStatus.BAD_REQUEST, problem)
+
+        text = (data.get("text") or "").strip()
+        if not text:
+            return self._fail(HTTPStatus.BAD_REQUEST, "没有可朗读的内容。")
+        if len(text) > 6000:
+            text = text[:6000]
+
+        audio = voice.synthesize(text)
+        if not audio:
+            return self._fail(HTTPStatus.BAD_GATEWAY, "语音合成失败，请稍后再试。")
+
+        self._headers(HTTPStatus.OK, "audio/mpeg", len(audio),
+                      extra={"Cache-Control": "public, max-age=86400"})
+        self.wfile.write(audio)
 
     # -- 处理 --------------------------------------------------------------
     def _serve_page(self):
