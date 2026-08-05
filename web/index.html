@@ -234,35 +234,45 @@
     var bar=document.createElement("div");bar.className="tools";
     var btn=document.createElement("button");btn.className="tool";
     btn.innerHTML=ICON_PLAY+"<span>朗读</span>";
-    function reset(){btn.className="tool";btn.innerHTML=ICON_PLAY+"<span>朗读</span>";}
+    function reset(){btn.disabled=false;btn.className="tool";btn.innerHTML=ICON_PLAY+"<span>朗读</span>";}
+    function fail(msg){btn.disabled=false;btn.innerHTML=ICON_PLAY+"<span>"+msg+"</span>";setTimeout(reset,3000);}
+
     btn.onclick=function(){
       if(player&&!player.paused){player.pause();player=null;reset();return;}
+
+      // Chrome 的自动播放策略看的是「play() 是不是在用户手势里调用的」。
+      // 先 fetch 再 play，手势已经过期，play() 既不播放也不报错——
+      // 按钮就永远停在「生成语音…」。所以在点击的同步路径里先建好
+      // audio 元素并调一次 play() 把手势占住，拿到 URL 后再赋 src。
+      var audio=new Audio();
+      audio.play().catch(function(){});
+      if(player)player.pause();
+      player=audio;
+
       btn.disabled=true;btn.innerHTML=ICON_PLAY+"<span>生成语音…</span>";
+      var settled=false;
+      audio.onplaying=function(){
+        settled=true;btn.disabled=false;btn.className="tool playing";
+        btn.innerHTML=ICON_STOP+"<span>停止</span>";
+      };
+      audio.onended=function(){player=null;reset();};
+      audio.onerror=function(){if(!settled)fail("播放失败");};
+      // 兜底：任何一环没回调，按钮也不能永远卡住。
+      setTimeout(function(){if(!settled&&btn.disabled)fail("语音超时");},90000);
+
       fetch("/api/speak",{method:"POST",headers:{"content-type":"application/json"},
         body:JSON.stringify({text:text})})
         .then(function(r){
           if(r.status===503)throw new Error("本地模式已关闭朗读");
-          if(!r.ok)throw new Error("语音服务暂时不可用");
+          if(!r.ok)throw new Error("语音服务不可用");
           return r.json();
         })
         .then(function(d){
-          if(!d.url)throw new Error("语音服务暂时不可用");
-          if(player)player.pause();
-          // 直接给 <audio> 一个 URL，让浏览器边下边播；
-          // 等整段 blob 下载完要几十秒，那期间按钮只能一直显示「生成语音…」。
-          player=new Audio(d.url);
-          player.onended=function(){player=null;reset();};
-          player.onplaying=function(){
-            btn.disabled=false;btn.className="tool playing";
-            btn.innerHTML=ICON_STOP+"<span>停止</span>";
-          };
-          return player.play();
+          if(!d.url)throw new Error("语音服务不可用");
+          audio.src=d.url;
+          return audio.play();
         })
-        .catch(function(e){
-          btn.disabled=false;
-          btn.innerHTML=ICON_PLAY+"<span>"+(e&&e.message?e.message:"朗读失败")+"</span>";
-          setTimeout(reset,3000);
-        });
+        .catch(function(e){if(!settled)fail(e&&e.message?e.message:"朗读失败");});
     };
     bar.appendChild(btn);bubble.appendChild(bar);
   }
