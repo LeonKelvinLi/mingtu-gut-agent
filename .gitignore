@@ -63,3 +63,7 @@ knowledge/
 # 本地部署本来就要装 ollama，顺手重建索引即可，不必让 3MB 二进制进版本库。
 !knowledge/chunks.jsonl
 !knowledge/vectors-gemini_*.npy
+# 预热缓存随仓库走：云端实例重启后缓存会清空，
+# 带上它才能让线上第一位访客也是秒回，而不是每次冷启动都重新算一遍。
+!knowledge/cache.jsonl
+!knowledge/cache-vectors.npy
