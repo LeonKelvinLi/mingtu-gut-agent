@@ -121,6 +121,29 @@ def ollama_up():
         return False
 
 
+def available_providers():
+    """按优先级列出所有已配置的 provider。
+
+    active_provider() 只看 key 在不在，不看还有没有额度。实测 OpenAI 与 Gemini
+    同时返回 429 额度耗尽时，整站每个未缓存请求都 500。所以作答要沿这个列表
+    依次尝试，某一家挂了就换下一家——付费额度会用完，服务不该跟着一起停。
+    """
+    if ollama_up():
+        return ["ollama"]
+    if local_only():
+        return []
+    out = []
+    if _anthropic() is not None:
+        out.append("anthropic")
+    if _openai() is not None:
+        out.append("openai")
+    if _read_key("GEMINI_API_KEY"):
+        out.append("gemini")
+    if _read_key("PERPLEXITY_API_KEY"):
+        out.append("perplexity")
+    return out
+
+
 def active_provider():
     """Which provider will answer, or None when nothing is configured.
 
@@ -397,7 +420,14 @@ def call_json(system, user, schema, effort="low", max_tokens=4096, fast=False):
 
 def generate(system, messages, max_tokens=8000, effort="high"):
     """Produce the user-facing answer. Returns text, or None on failure."""
-    provider = active_provider()
+    for _p in available_providers():
+        text = _generate_one(_p, system, messages, max_tokens, effort)
+        if text and text.strip():
+            return text
+    return None
+
+
+def _generate_one(provider, system, messages, max_tokens, effort):
 
     if provider == "anthropic":
         try:

@@ -55,8 +55,15 @@ class Retriever:
         bm25_scores = self.bm25.get_scores(tokenize(query))
         bm25_rank = np.argsort(bm25_scores)[::-1][:CANDIDATES]
 
-        dense_scores = self.vectors @ self._embed_query(query)
-        dense_rank = np.argsort(dense_scores)[::-1][:CANDIDATES]
+        # 向量服务挂掉（额度耗尽、网络不通）不应该让整个请求 500。
+        # BM25 是纯本地的，退到只用它仍然能给出可用答案——
+        # 对菌株号、剂量、法规文号这类查询，BM25 本来就是主力。
+        try:
+            dense_scores = self.vectors @ self._embed_query(query)
+        except Exception:
+            dense_scores = np.zeros(len(self.chunks), dtype="float32")
+        dense_rank = (np.argsort(dense_scores)[::-1][:CANDIDATES]
+                      if dense_scores.any() else np.array([], dtype=int))
 
         fused = {}
         for rank, idx in enumerate(bm25_rank):
