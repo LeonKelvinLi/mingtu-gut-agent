@@ -43,13 +43,29 @@ def normalize(query):
     return q
 
 
+_FINGERPRINT = None
+
+
 def corpus_fingerprint():
-    """语料指纹。语料一变，缓存整体作废。"""
+    """语料指纹：按**内容**算，不能用 mtime。
+
+    最初用的是 size+mtime，结果是缓存在生产环境永远不命中——
+    git checkout 会给每个文件一个新的 mtime，所以每次部署指纹都变，
+    整份预热缓存被当作过期直接丢掉。本地测着好好的，线上白跑。
+    内容哈希在任何机器上都一致，这才是「语料是否变了」的真实判据。
+    """
+    global _FINGERPRINT
+    if _FINGERPRINT:
+        return _FINGERPRINT
     chunks = CACHE_DIR / "chunks.jsonl"
     if not chunks.exists():
         return "none"
-    st = chunks.stat()
-    return hashlib.sha1(f"{st.st_size}:{int(st.st_mtime)}".encode()).hexdigest()[:12]
+    h = hashlib.sha1()
+    with chunks.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    _FINGERPRINT = h.hexdigest()[:12]
+    return _FINGERPRINT
 
 
 class AnswerCache:
