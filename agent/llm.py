@@ -521,6 +521,43 @@ def stream_generate(system, messages, max_tokens=2000):
                 pass
         return
 
+    if provider == "ollama":
+        # 本地作答一轮要一分多钟，不流式就是一分多钟的空白屏。
+        payload = {
+            "model": OLLAMA_MODEL, "stream": True, "think": False,
+            "options": {"temperature": 0.2, "num_predict": max_tokens,
+                        "num_ctx": int(os.environ.get("MINGTU_NUM_CTX", "16384"))},
+            "messages": [{"role": "system", "content": system}] + _fold_system_into_user(messages),
+        }
+        proc = subprocess.Popen(
+            ["curl", "-sS", "--no-buffer", "--max-time", "900", "-X", "POST",
+             f"{OLLAMA_HOST}/api/chat", "-H", "content-type: application/json",
+             "--data-binary", "@-"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        try:
+            proc.stdin.write(json.dumps(payload, ensure_ascii=False))
+            proc.stdin.close()
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                piece = (d.get("message") or {}).get("content")
+                if piece:
+                    yield piece
+                if d.get("done"):
+                    break
+        finally:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        return
+
     if provider == "openai":
         # 真流式。少了这段，SSE 端点看起来在流，实际是等整段生成完再一次性吐出，
         # 首字延迟等于总耗时——流式的全部意义就没了。

@@ -68,3 +68,5 @@ knowledge/
 !knowledge/cache.jsonl
 !knowledge/cache-vectors.npy
 !knowledge/vectors-openai_*.npy
+.appicon.png
+肠道菌群健康顾问.app/

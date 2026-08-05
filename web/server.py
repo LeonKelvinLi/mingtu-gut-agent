@@ -103,6 +103,9 @@ DEFAULT_NOTICE = "这一轮没有产出可用的回答，请再问一次。"
 def live_available():
     """实时检索是否可用。问的是 live.py 自己用的那个密钥函数，不另起一套判断。"""
     try:
+        from agent.llm import local_only
+        if local_only():
+            return False        # 本地模式下实时检索是关闭的，不能显示成可用
         from agent.live import perplexity_key
         return bool(perplexity_key())
     except BaseException:
