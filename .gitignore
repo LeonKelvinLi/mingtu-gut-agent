@@ -1,6 +1,48 @@
+# ---- 虚拟环境与字节码 --------------------------------------------------------
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+
+# ---- 密钥 --------------------------------------------------------------------
+# .env 里是 ANTHROPIC / OPENAI / PERPLEXITY 的真实 key。
+# .env.example 是模板，必须提交。
 .env
+.env.*
+!.env.example
+
+# ---- 运行时临时文件 ----------------------------------------------------------
+# tools/research.py 把 Perplexity 请求体写成 .payload-<hash>.json 再交给 curl，
+# 正常路径会删掉，进程被杀时会留下残骸。
 .payload-*.json
+# Perplexity 额度用尽是全停，不降级换弱模型：提示词会被 park 成这个文件等人工重跑。
 research/*.PARKED.txt
+
+# ---- 构建产物：knowledge/ ----------------------------------------------------
+# 结论：chunks.jsonl 和 vectors.npy 都不进版本库。理由按重要性排：
+#
+# 1) 这两个文件必须逐行对齐，不能分开管理。
+#    agent/retrieve.py 用同一个下标同时索引两者（self.vectors @ 查询向量 得到
+#    分数，再用 self.chunks[idx] 取文本）。只提交其中一个、或者两者出自不同
+#    次构建，下标就会错位 —— 表现是回答里的 [3] 指向另一段资料。
+#    对一个要求「逐条标注来源、编造编号视为严重缺陷」的系统，这是安全缺陷，
+#    不是性能问题。两个一起忽略，永远由 `python -m agent.index build` 成对生成，
+#    是唯一能保证它们同源的做法。
+#
+# 2) vectors.npy 是 5.4 MB 的 float32 二进制（443x3072），git 无法 diff，
+#    每次重建整体变化，提交几次就把仓库撑大，而且 review 时看不出改了什么。
+#
+# 3) 真正的源在 research/*.md（提交），生成规则在 agent/chunker.py（提交）。
+#    产物可以完全重建，没有信息丢失。
+#
+# 代价要说清楚：重建 vectors.npy 要调一次 OpenAI embedding，花钱且需要 key；
+# chunks.jsonl 则是纯本地几秒钟的事。新机器部署时必须先跑一次 index build，
+# run.sh 会在索引缺失或行数与向量行数对不上时拦住启动并给出命令。
+knowledge/chunks.jsonl
+knowledge/vectors.npy
+
+# ---- 编辑器与系统 ------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
