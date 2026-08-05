@@ -135,12 +135,13 @@ def active_provider():
         return None
     if _anthropic() is not None:
         return "anthropic"
-    # Gemini before OpenAI: its free tier is what makes the hosted demo cost
-    # nothing, and on Chinese-language health text its quality is comparable.
-    if _read_key("GEMINI_API_KEY"):
-        return "gemini"
+    # OpenAI 优先于 Gemini：Gemini 免费额度已耗尽（429 prepayment credits
+    # depleted），线上一度整片失败。付费且可用的通道必须排在免费额度前面，
+    # 否则「免费」换来的是客户看到的服务不可用。
     if _openai() is not None:
         return "openai"
+    if _read_key("GEMINI_API_KEY"):
+        return "gemini"
     if _read_key("PERPLEXITY_API_KEY"):
         return "perplexity"
     return None

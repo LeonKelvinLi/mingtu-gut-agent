@@ -62,9 +62,10 @@ def active_backend():
     if local_only():
         return None
     from agent.llm import _read_key
-    if _read_key("GEMINI_API_KEY"):
-        return "gemini"
-    return "openai" if _read_key("OPENAI_API_KEY") else None
+    # 与作答同样的理由：可用性优先于免费。
+    if _read_key("OPENAI_API_KEY"):
+        return "openai"
+    return "gemini" if _read_key("GEMINI_API_KEY") else None
 
 
 def backend_id():

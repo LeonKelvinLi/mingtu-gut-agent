@@ -67,3 +67,4 @@ knowledge/
 # 带上它才能让线上第一位访客也是秒回，而不是每次冷启动都重新算一遍。
 !knowledge/cache.jsonl
 !knowledge/cache-vectors.npy
+!knowledge/vectors-openai_*.npy
