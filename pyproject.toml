@@ -1,0 +1,37 @@
+# mingtu 项目元数据
+#
+# 这是一个应用，不是要发布到 PyPI 的库：跑法是 `python -m agent.index build`、
+# `python -m web.app`，从仓库根目录直接导入 agent/ 和 tools/。
+# 因此这里刻意不声明 [build-system] —— 声明一个永远不会被调用的构建后端
+# 只会让人以为可以 pip install 这个目录。依赖的真实来源是 requirements.txt。
+
+[project]
+name = "mingtu"
+version = "1.0.0"
+description = "面向中国普通用户的肠道菌群健康顾问：分级证据 RAG + 确定性安全层"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+keywords = ["肠道菌群", "益生菌", "RAG", "健康科普", "中文"]
+
+# 与 requirements.txt 的直接依赖保持一致。改这里必须同步改那里。
+dependencies = [
+    "anthropic==0.120.2",
+    "openai==2.53.0",
+    "numpy==2.5.1",
+    "jieba==0.42.1",
+    "rank-bm25==0.2.2",
+]
+
+# uv 创建的虚拟环境：告诉 uv 这个目录不是可构建的包，只是一个应用工作区，
+# 否则 uv sync 会去找构建后端然后失败。
+[tool.uv]
+package = false
+
+[tool.mingtu]
+# 产品边界，写在元数据里是为了让接手的人第一眼看到，而不是翻代码才发现。
+# 定位是科普与就医导航，不是诊断工具；急症判定由 agent/safety.py 确定性完成，
+# 模型分类器只能把风险等级往上调，不能往下调。
+positioning = "科普与就医导航，非诊断工具"
+emergency_screen = "agent/safety.py:screen_input（确定性，不依赖模型）"
+answer_language = "zh-CN"
+index_build = "python -m agent.index build"

@@ -25,7 +25,7 @@ import re
 from agent import safety
 from agent.classify import classify, rerank
 from agent.live import needs_live, search_live
-from agent.llm import MODEL, client
+from agent.llm import available, generate, provider_label
 from agent.prompt import build_evidence_block, build_system_prompt
 from agent.retrieve import Retriever
 
@@ -118,13 +118,15 @@ class Agent:
         result["passages"] = passages
         result["used_live"] = used_live
 
-        c = client()
-        if c is None:
+        result["provider"] = provider_label()
+        if not available():
             result["answer"] = (
-                "【未配置 ANTHROPIC_API_KEY，无法生成回答】\n"
-                f"本轮检索到 {len(passages)} 条相关资料，检索与安全层工作正常。"
+                "【未配置任何模型 API Key，无法生成回答】\n"
+                f"本轮检索到 {len(passages)} 条相关资料，检索层与安全层工作正常。\n"
+                "请在项目根目录 .env 中配置 ANTHROPIC_API_KEY、OPENAI_API_KEY "
+                "或 PERPLEXITY_API_KEY 中的任意一个。"
             )
-            result["error"] = "no_anthropic_key"
+            result["error"] = "no_model_key"
             return result
 
         messages = list(history or [])
@@ -172,25 +174,7 @@ class Agent:
         return result
 
     def _generate(self, messages):
-        c = client()
-        try:
-            with c.messages.stream(
-                model=MODEL,
-                max_tokens=8000,
-                system=[{
-                    "type": "text",
-                    "text": self.system,
-                    "cache_control": {"type": "ephemeral"},
-                }],
-                output_config={"effort": "high"},
-                messages=messages,
-            ) as stream:
-                resp = stream.get_final_message()
-            if resp.stop_reason == "refusal":
-                return None
-            return next((b.text for b in resp.content if b.type == "text"), "")
-        except Exception:
-            return None
+        return generate(self.system, messages, max_tokens=8000, effort="high")
 
     @staticmethod
     def _sources(answer, passages):
