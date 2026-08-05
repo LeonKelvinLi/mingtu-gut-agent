@@ -243,14 +243,19 @@
         .then(function(r){
           if(r.status===503)throw new Error("本地模式已关闭朗读");
           if(!r.ok)throw new Error("语音服务暂时不可用");
-          return r.blob();
+          return r.json();
         })
-        .then(function(blob){
+        .then(function(d){
+          if(!d.url)throw new Error("语音服务暂时不可用");
           if(player)player.pause();
-          player=new Audio(URL.createObjectURL(blob));
-          btn.disabled=false;btn.className="tool playing";
-          btn.innerHTML=ICON_STOP+"<span>停止</span>";
+          // 直接给 <audio> 一个 URL，让浏览器边下边播；
+          // 等整段 blob 下载完要几十秒，那期间按钮只能一直显示「生成语音…」。
+          player=new Audio(d.url);
           player.onended=function(){player=null;reset();};
+          player.onplaying=function(){
+            btn.disabled=false;btn.className="tool playing";
+            btn.innerHTML=ICON_STOP+"<span>停止</span>";
+          };
           return player.play();
         })
         .catch(function(e){

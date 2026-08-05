@@ -100,6 +100,24 @@ NOTICES = {
 DEFAULT_NOTICE = "这一轮没有产出可用的回答，请再问一次。"
 
 
+# 朗读用两步：POST 存下文本拿一个 token，GET 用这个 token 流式取音频。
+# 直接用 POST 返回音频的话，浏览器只能等整段下载完才能播——而整段合成要几十秒。
+# 换成 GET 之后 <audio src> 可以边下边播，第一声大约一秒半就出来。
+_SPEAK_TEXTS = {}
+_SPEAK_LOCK = threading.Lock()
+_SPEAK_MAX = 64
+
+
+def stash_speak_text(text):
+    import hashlib
+    token = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+    with _SPEAK_LOCK:
+        _SPEAK_TEXTS[token] = text
+        while len(_SPEAK_TEXTS) > _SPEAK_MAX:
+            _SPEAK_TEXTS.pop(next(iter(_SPEAK_TEXTS)))
+    return token
+
+
 def live_available():
     """实时检索是否可用。问的是 live.py 自己用的那个密钥函数，不另起一套判断。"""
     try:
@@ -324,6 +342,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             return self._serve_page()
         if path == "/health":
             return self._json(SERVICE.health())
+        if path.startswith("/api/speak/"):
+            return self._speak_stream(path.rsplit("/", 1)[-1])
         if path == "/favicon.ico":
             self._headers(HTTPStatus.NO_CONTENT, "image/x-icon", 0)
             return
@@ -393,12 +413,29 @@ class ChatHandler(BaseHTTPRequestHandler):
         if len(text) > 6000:
             text = text[:6000]
 
-        audio = voice.synthesize(text)
-        if not audio:
-            return self._fail(HTTPStatus.BAD_GATEWAY, "语音合成失败，请稍后再试。")
+        self._json({"ok": True, "url": "/api/speak/" + stash_speak_text(text)})
 
+    def _speak_stream(self, token):
+        """流式返回音频。浏览器用 <audio src> 直接播，不必等整段合成完。"""
+        from agent import voice
+
+        with _SPEAK_LOCK:
+            text = _SPEAK_TEXTS.get(token)
+        if not text or not voice.available():
+            return self._fail(HTTPStatus.NOT_FOUND, "语音不可用。")
+
+        # 必须带 Content-Length。Chrome 的 <audio> 拿到没有长度的分块响应时
+        # 不会边下边播，而是一直等到整段下完——按钮就永远停在「生成语音…」。
+        # 内部仍然走 ElevenLabs 的流式接口（快得多），只是攒齐再发。
+        try:
+            audio = b"".join(voice.synthesize_stream(text))
+        except Exception:
+            audio = b""
+        if not audio:
+            return self._fail(HTTPStatus.BAD_GATEWAY, "语音合成失败。")
         self._headers(HTTPStatus.OK, "audio/mpeg", len(audio),
-                      extra={"Cache-Control": "public, max-age=86400"})
+                      extra={"Cache-Control": "public, max-age=86400",
+                             "Accept-Ranges": "bytes"})
         self.wfile.write(audio)
 
     # -- 处理 --------------------------------------------------------------

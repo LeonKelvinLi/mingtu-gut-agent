@@ -75,7 +75,7 @@ fi
 note "启动本地服务 :\$PORT"
 alert "正在加载知识库…"
 cd "\$REPO"
-MINGTU_LOCAL_ONLY=1 "\$REPO/.venv/bin/python" web/server.py --host 127.0.0.1 --port \$PORT >>"\$LOG" 2>&1 &
+MINGTU_LOCAL_ONLY=1 MINGTU_ALLOW_TTS=1 "\$REPO/.venv/bin/python" web/server.py --host 127.0.0.1 --port \$PORT >>"\$LOG" 2>&1 &
 SERVER_PID=\$!
 echo \$SERVER_PID > /tmp/mingtu-agent.pid
 

@@ -23,10 +23,19 @@ from pathlib import Path
 
 import numpy as np
 
+import os
+
 REPO = Path(__file__).resolve().parent.parent
-CACHE_DIR = REPO / "knowledge"
-CACHE_PATH = CACHE_DIR / "cache.jsonl"
-CACHE_VECS = CACHE_DIR / "cache-vectors.npy"
+CACHE_DIR = REPO / "knowledge"          # 语料索引始终在仓库里
+
+# 缓存要写在持久盘上。云主机的文件系统是临时的：每次部署都会重置，
+# 运行期间新缓存的回答会全部消失，只剩随仓库带上去的那份预热。
+# 挂了盘之后，用户问过的问题下次部署仍然是秒回。
+DATA_DIR = Path(os.environ.get("MINGTU_DATA_DIR", "")) if os.environ.get("MINGTU_DATA_DIR") else CACHE_DIR
+CACHE_PATH = DATA_DIR / "cache.jsonl"
+CACHE_VECS = DATA_DIR / "cache-vectors.npy"
+SEED_PATH = CACHE_DIR / "cache.jsonl"          # 仓库里那份预热，用来给空盘播种
+SEED_VECS = CACHE_DIR / "cache-vectors.npy"
 
 # 0.93 是刻意定高的。定低了会把「益生菌能治肠炎吗」和「益生菌能预防肠炎吗」
 # 当成同一个问题——这两个问题的合规答案并不相同。宁可少命中，不可答错。
@@ -77,6 +86,16 @@ class AnswerCache:
 
     # -- 持久化 --------------------------------------------------------------
     def _load(self):
+        # 持久盘第一次挂上来是空的，用仓库里那份预热给它播种，
+        # 否则新部署的第一位访客要等完整生成。
+        if DATA_DIR != CACHE_DIR and not CACHE_PATH.exists() and SEED_PATH.exists():
+            try:
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+                CACHE_PATH.write_bytes(SEED_PATH.read_bytes())
+                if SEED_VECS.exists():
+                    CACHE_VECS.write_bytes(SEED_VECS.read_bytes())
+            except Exception:
+                pass
         if not CACHE_PATH.exists():
             return
         fingerprint = corpus_fingerprint()
@@ -110,7 +129,7 @@ class AnswerCache:
             self.entries, self._by_key = [], {}
 
     def _save(self):
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         with CACHE_PATH.open("w", encoding="utf-8") as f:
             for row in self.entries:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")

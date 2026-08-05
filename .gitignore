@@ -70,3 +70,6 @@ knowledge/
 !knowledge/vectors-openai_*.npy
 .appicon.png
 肠道菌群健康顾问.app/
+# 音频每条约 2MB，35 条就是 70MB，不适合进版本库。
+# 线上挂了持久盘（/var/data），合成一次之后就一直在，不会因部署丢失。
+knowledge/audio/

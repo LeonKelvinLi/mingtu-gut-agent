@@ -14,23 +14,39 @@
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
-AUDIO_DIR = Path(__file__).resolve().parent.parent / "knowledge" / "audio"
+# 音频同样放持久盘：临时文件系统上，每次部署都要把所有回答重新合成一遍，
+# 既慢又重复计费。
+_ROOT = Path(os.environ.get("MINGTU_DATA_DIR", "")) if os.environ.get("MINGTU_DATA_DIR") \
+    else Path(__file__).resolve().parent.parent / "knowledge"
+AUDIO_DIR = _ROOT / "audio"
 MODEL = "eleven_multilingual_v2"
 # Rachel。多语种模型下中文发音自然，语速适合健康科普这种需要听清楚的内容。
 DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM"
-MAX_CHARS = 2500          # 超长回答只念前面部分，避免一次烧掉大量额度
+MAX_CHARS = 1200          # 超长回答只念前面部分，避免一次烧掉大量额度
 
 
 def available():
-    """本地模式下不提供朗读，见模块开头第 3 点。"""
+    """朗读是否可用。
+
+    默认在本地模式下关闭，因为朗读必然要把回答文本发到 ElevenLabs——
+    而本地版对客户的承诺是「数据不出本机」。
+
+    但这是个可以由部署方自己权衡的取舍，不是安全边界：朗读发出去的是
+    智能体生成的回答，不是用户原话。所以给一个显式开关 MINGTU_ALLOW_TTS=1，
+    打开后本地模式也能朗读。默认仍然关闭——要放弃一条承诺，必须是有人
+    主动按下的，不能是默认发生的。
+    """
     from agent.llm import local_only, _read_key
-    if local_only():
+    if not _read_key("ELEVENLABS_API_KEY"):
         return False
-    return bool(_read_key("ELEVENLABS_API_KEY"))
+    if local_only() and os.environ.get("MINGTU_ALLOW_TTS", "").strip() not in ("1", "true", "yes"):
+        return False
+    return True
 
 
 def speakable(text):
@@ -47,6 +63,65 @@ def speakable(text):
 def _cache_path(text, voice):
     key = hashlib.sha1(f"{voice}:{MODEL}:{text}".encode("utf-8")).hexdigest()[:20]
     return AUDIO_DIR / f"{key}.mp3"
+
+
+def synthesize_stream(text, voice=DEFAULT_VOICE):
+    """逐块产出 mp3。用 ElevenLabs 的 /stream 端点。
+
+    一次性合成 1350 字要 51 秒，这段时间里按钮只能一直显示「生成语音…」——
+    用户看到的就是「朗读坏了」。流式下第一块音频一秒左右就到，
+    浏览器可以边下边播。命中本地缓存时直接整块吐出，不再请求。
+    """
+    from agent.llm import _read_key
+
+    clean = speakable(text)
+    if not clean:
+        return
+
+    path = _cache_path(clean, voice)
+    if path.exists() and path.stat().st_size > 1024:
+        yield path.read_bytes()
+        return
+
+    key = _read_key("ELEVENLABS_API_KEY")
+    if not key:
+        return
+
+    payload = {
+        "text": clean,
+        "model_id": MODEL,
+        "voice_settings": {"stability": 0.55, "similarity_boost": 0.75, "speed": 0.95},
+    }
+    proc = subprocess.Popen(
+        ["curl", "-sS", "--no-buffer", "--max-time", "300", "-X", "POST",
+         f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream?output_format=mp3_44100_64",
+         "-H", f"xi-api-key: {key}",
+         "-H", "content-type: application/json", "--data-binary", "@-"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    )
+    collected = bytearray()
+    try:
+        proc.stdin.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        proc.stdin.close()
+        while True:
+            chunk = proc.stdout.read(8192)
+            if not chunk:
+                break
+            collected += chunk
+            yield chunk
+    finally:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    # 播完再落盘，下次同一段回答直接命中缓存，不重复计费。
+    if collected[:3] == b"ID3" or collected[:2] == b"\xff\xfb":
+        try:
+            AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(bytes(collected))
+        except Exception:
+            pass
 
 
 def synthesize(text, voice=DEFAULT_VOICE):
