@@ -27,6 +27,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -307,8 +308,15 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _headers(self, status, content_type, length, extra=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(length))
-        self.send_header("Cache-Control", "no-store")
+        if length is None:
+            # 长度未知（边合成边发）。HTTP/1.1 下没有 Content-Length 就必须
+            # 有别的方式界定报文结束，否则客户端会一直等下去——这里用关连接。
+            self.send_header("Connection", "close")
+            self.close_connection = True
+        else:
+            self.send_header("Content-Length", str(length))
+        if "Cache-Control" not in (extra or {}):
+            self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
@@ -424,19 +432,82 @@ class ChatHandler(BaseHTTPRequestHandler):
         if not text or not voice.available():
             return self._fail(HTTPStatus.NOT_FOUND, "语音不可用。")
 
-        # 必须带 Content-Length。Chrome 的 <audio> 拿到没有长度的分块响应时
-        # 不会边下边播，而是一直等到整段下完——按钮就永远停在「生成语音…」。
-        # 内部仍然走 ElevenLabs 的流式接口（快得多），只是攒齐再发。
+        # 已经合成过的直接从盘上发，并且**真的**支持 Range。
+        # 之前这里给所有响应都挂了 Accept-Ranges: bytes 却从不处理 Range 请求：
+        # Chrome 的 <audio> 看到「可字节定位」就先发 Range: bytes=0-，
+        # 收到的却是一个普通 200 整段响应，于是卡在 readyState=0，
+        # 既不播放也不报错——表现成按钮永远停在「生成语音…」。
+        cached = voice.cached_path(text)
+        if cached:
+            return self._send_audio_file(cached)
+
+        # 没合成过：边合成边发，不带 Content-Length 也不带 Accept-Ranges。
+        # 整段 1200 字要合成三十多秒，攒齐再发就是三十多秒的静默等待；
+        # 分块发的话第一声一秒多就出来。代价是这一遍不能拖动进度条——
+        # 但这一遍本来就还没有完整文件可供定位。合成完会落盘，
+        # 下次进上面那条分支，就是可定位的完整文件了。
         try:
-            audio = b"".join(voice.synthesize_stream(text))
+            stream = voice.synthesize_stream(text)
+            first = next(stream, b"")
         except Exception:
-            audio = b""
-        if not audio:
+            first = b""
+        if not first:
             return self._fail(HTTPStatus.BAD_GATEWAY, "语音合成失败。")
-        self._headers(HTTPStatus.OK, "audio/mpeg", len(audio),
-                      extra={"Cache-Control": "public, max-age=86400",
-                             "Accept-Ranges": "bytes"})
-        self.wfile.write(audio)
+
+        self._headers(HTTPStatus.OK, "audio/mpeg", None,
+                      extra={"Cache-Control": "no-store"})
+        try:
+            self.wfile.write(first)
+            self.wfile.flush()
+            for chunk in stream:
+                if not chunk:
+                    continue
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass        # 用户中途停了朗读，正常情况
+        self.close_connection = True
+
+    def _send_audio_file(self, path):
+        """发磁盘上的音频，支持 Range。<audio> 要靠它定位和续播。"""
+        try:
+            total = path.stat().st_size
+            rng = (self.headers.get("Range") or "").strip()
+            m = re.match(r"bytes=(\d*)-(\d*)$", rng) if rng else None
+            start, end = 0, total - 1
+            partial = False
+            if m and (m.group(1) or m.group(2)):
+                if m.group(1):
+                    start = int(m.group(1))
+                    if m.group(2):
+                        end = int(m.group(2))
+                else:
+                    start = max(0, total - int(m.group(2)))     # bytes=-N 取末尾 N 字节
+                end = min(end, total - 1)
+                if start > end or start >= total:
+                    self._headers(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
+                                  "audio/mpeg", 0,
+                                  extra={"Content-Range": "bytes */%d" % total})
+                    return
+                partial = True
+
+            length = end - start + 1
+            extra = {"Cache-Control": "public, max-age=86400", "Accept-Ranges": "bytes"}
+            if partial:
+                extra["Content-Range"] = "bytes %d-%d/%d" % (start, end, total)
+            self._headers(HTTPStatus.PARTIAL_CONTENT if partial else HTTPStatus.OK,
+                          "audio/mpeg", length, extra=extra)
+            with path.open("rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    block = f.read(min(65536, left))
+                    if not block:
+                        break
+                    self.wfile.write(block)
+                    left -= len(block)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     # -- 处理 --------------------------------------------------------------
     def _serve_page(self):

@@ -65,6 +65,20 @@ def _cache_path(text, voice):
     return AUDIO_DIR / f"{key}.mp3"
 
 
+def cached_path(text, voice=DEFAULT_VOICE):
+    """这段文本是否已经有落盘的音频。有就返回路径，没有返回 None。
+
+    调用方靠它决定走哪条路：已经有完整文件就整段发并支持 Range（可以拖进度条），
+    还没有就边合成边发（第一声快，但这一遍不可定位）。
+    """
+    clean = speakable(text)
+    if not clean:
+        return None
+    path = _cache_path(clean, voice)
+    if path.exists() and path.stat().st_size > 1024:
+        return path
+    return None
+
 def synthesize_stream(text, voice=DEFAULT_VOICE):
     """逐块产出 mp3。用 ElevenLabs 的 /stream 端点。
 
