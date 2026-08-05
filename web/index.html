@@ -304,7 +304,9 @@ details.detail[open]>summary::before{content:"−"}
   ];
 
   var GRADE_CLASS = { A: "g-A", B: "g-B", C: "g-C", D: "g-D", E: "g-E" };
-  var REQUEST_TIMEOUT = 300000;
+  /* 本地模型（qwen3:14b）一轮可能跑好几分钟。这里放宽到 15 分钟，
+     宁可让计时器一直走，也不要把一个还在生成的请求掐掉。 */
+  var REQUEST_TIMEOUT = 900000;
   var HISTORY_LIMIT = 12;
 
   var stream = document.getElementById("stream");
@@ -333,6 +335,13 @@ details.detail[open]>summary::before{content:"−"}
 
   function scrollDown() {
     stream.scrollTop = stream.scrollHeight;
+  }
+
+  /* 一轮问答动辄好几分钟，"396 秒"读起来要在脑子里换算一次 */
+  function humanTime(seconds) {
+    var s = Math.max(0, Math.round(seconds));
+    if (s < 60) return s + " 秒";
+    return Math.floor(s / 60) + " 分 " + (s % 60) + " 秒";
   }
 
   function isCJK(ch) {
@@ -466,7 +475,7 @@ details.detail[open]>summary::before{content:"−"}
     dots.appendChild(el("i"));
     dots.appendChild(el("i"));
     dots.appendChild(el("i"));
-    var time = el("span", "elapsed", "0 秒");
+    var time = el("span", "elapsed", humanTime(0));
     row.appendChild(dots);
     row.appendChild(el("span", null, "正在检索并核对证据"));
     row.appendChild(time);
@@ -477,7 +486,7 @@ details.detail[open]>summary::before{content:"−"}
 
     var start = Date.now();
     var timer = setInterval(function () {
-      time.textContent = Math.round((Date.now() - start) / 1000) + " 秒";
+      time.textContent = humanTime((Date.now() - start) / 1000);
     }, 1000);
     return { node: wrap, stop: function () { clearInterval(timer); } };
   }
@@ -587,7 +596,7 @@ details.detail[open]>summary::before{content:"−"}
       if (stats.repairs) meta.appendChild(pill("合规重写 " + stats.repairs + " 次", "warn"));
       meta.appendChild(pill("风险分流：" + (stats.risk_label || "一般咨询")));
     }
-    if (stats.elapsed) meta.appendChild(pill("用时 " + stats.elapsed + " 秒"));
+    if (stats.elapsed) meta.appendChild(pill("用时 " + humanTime(stats.elapsed)));
     card.appendChild(meta);
 
     if (sources.length) card.appendChild(buildSources(sources, msgId));

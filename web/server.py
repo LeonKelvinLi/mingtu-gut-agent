@@ -6,15 +6,15 @@
 
 路由
     GET  /            index.html
-    GET  /health      运行自检：密钥、索引规模、当前并发
+    GET  /health      运行自检：作答模型、索引规模、当前并发
     POST /api/chat    {message, history} -> JSON
 
 几个不显眼但重要的决定：
 
-  * Agent 在启动时构建一次。构建过程要加载 443 段索引、3072 维向量和 BM25，
+  * Agent 在启动时构建一次。构建过程要加载全部索引块、向量矩阵和 BM25，
     放进请求里做等于每个用户都付一次这个代价。
-  * 并发用信号量限流，不是无限开线程。后端串着 OpenAI 与 Anthropic 两个有速率
-    限制的接口，放任并发只会把超时换成另一种超时。
+  * 并发用信号量限流，不是无限开线程。后端串着嵌入接口和作答模型，
+    云端的有速率限制，本地的抢同一块显存，放任并发只会把超时换成另一种超时。
   * 浏览器传来的 history 在服务端重新规整（角色、长度、严格交替）。
     agent.core 会在末尾追加本轮提问，所以历史必须以 assistant 结尾，
     否则拼出来的对话结构是坏的。
@@ -54,12 +54,18 @@ MAX_CONCURRENT = 3              # 同时进行的问答数
 QUEUE_TIMEOUT = 150             # 排队等待上限（秒）
 
 # research/*.md 的文件名不适合直接给用户看，这里给出对应的中文标题。
+# 语料还在扩，没登记的 source 会原样显示文件名——难看但不会出错，
+# 加了新的研究文件就在这里补一行。
 SOURCE_TITLES = {
     "01-strains": "菌株证据",
     "02-diet": "膳食纤维与益生元",
     "03-china-reg": "中国监管与市场",
     "04-limits": "临床边界与常见误区",
     "05-systemic": "菌群与全身健康",
+    "06-symptoms": "症状的日常处理",
+    "07-drugs": "药物与菌群",
+    "08-china-diet": "中国人的饮食与作息",
+    "09-product": "看懂与挑选产品",
     "live:perplexity": "实时检索",
 }
 
@@ -118,10 +124,12 @@ def clean_message(raw):
 
 
 def clean_history(raw):
-    """把浏览器传来的历史整理成 Anthropic 能接受的结构。
+    """把浏览器传来的历史整理成作答模型能接受的结构。
 
     规则：只留 user/assistant，角色严格交替，以 user 开头、assistant 结尾。
     最后一条必须是 assistant，因为 agent.core 会在其后追加本轮提问。
+    浏览器传什么都不算数：role 是自由字符串，混进 system 就等于把注入通道
+    交给了前端，所以这里只认白名单。
     """
     if not isinstance(raw, list):
         return []
@@ -386,6 +394,19 @@ class ChatHandler(BaseHTTPRequestHandler):
         sys.stderr.write("%s  %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
 
 
+class ChatServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            # 用户关掉页面或中途刷新。一轮问答要跑好几分钟，这会经常发生，
+            # 它是正常情况，不该在日志里留一段堆栈。
+            print("  连接被客户端提前断开", file=sys.stderr)
+            return
+        super().handle_error(request, client_address)
+
+
 # --- 入口 ---------------------------------------------------------------------
 
 def main():
@@ -415,8 +436,7 @@ def main():
         print("  注意：没有配置任何模型 API Key，服务以降级模式运行——"
               "报警症状筛查与资料检索可用，回答无法生成。")
 
-    server = ThreadingHTTPServer((args.host, args.port), ChatHandler)
-    server.daemon_threads = True
+    server = ChatServer((args.host, args.port), ChatHandler)
     shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
     print(f"  已启动：http://{shown}:{args.port}  （Ctrl+C 停止）")
     try:

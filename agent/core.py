@@ -74,7 +74,8 @@ class Agent:
 
         pool.sort(key=lambda c: c["_score"], reverse=True)
         passages = rerank(query, pool[:24], top_n=TOP_N)
-        return passages, used_live
+        degraded = any(p.get("_rerank_fallback") for p in passages)
+        return passages, used_live, degraded
 
     # -- validation ---------------------------------------------------------
     @staticmethod
@@ -114,9 +115,14 @@ class Agent:
             return result
         result["escalated"] = False
 
-        passages, used_live = self.gather(query, routing)
+        passages, used_live, rerank_degraded = self.gather(query, routing)
         result["passages"] = passages
         result["used_live"] = used_live
+        # 哪些 LLM 阶段没真正跑起来，必须让调用方看得见。
+        # 静默降级看上去和「很快」一模一样，这正是最危险的地方。
+        result["degraded"] = [s for s, bad in
+                              (("分流", routing.get("_fallback")),
+                               ("重排", rerank_degraded)) if bad]
 
         result["provider"] = provider_label()
         if not available():

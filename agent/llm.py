@@ -23,6 +23,8 @@ ANTHROPIC_MODEL = "claude-opus-5"
 OPENAI_MODEL = "gpt-5.1"
 PERPLEXITY_MODEL = "sonar-pro"
 OLLAMA_MODEL = os.environ.get("MINGTU_LLM_MODEL", "qwen3:14b")
+# 分流与重排是机械任务，用小模型即可，速度差一个量级。作答仍用大模型。
+OLLAMA_FAST_MODEL = os.environ.get("MINGTU_FAST_MODEL", "qwen3:4b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 GEMINI_MODEL = os.environ.get("MINGTU_GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_FALLBACK = "gemini-2.5-flash"
@@ -80,6 +82,27 @@ def _openai():
     return _clients["openai"]
 
 
+def _norm_tag(name):
+    return name if ":" in name else f"{name}:latest"
+
+
+def _ollama_has(name):
+    """Exact tag match, not base-name match.
+
+    Comparing only the part before the colon made qwen3:14b satisfy a request
+    for qwen3:4b. Ollama then 404s, call_json swallows the error and returns
+    None, and classify/rerank quietly drop to their deterministic fallbacks —
+    the pipeline looks fast and healthy while two model stages never run.
+    """
+    try:
+        proc = subprocess.run(["curl", "-sS", "--max-time", "3", f"{OLLAMA_HOST}/api/tags"],
+                              capture_output=True, text=True)
+        names = {_norm_tag(m.get("name", "")) for m in json.loads(proc.stdout).get("models", [])}
+        return _norm_tag(name) in names
+    except Exception:
+        return False
+
+
 def ollama_up():
     """True when the local runtime is serving the configured chat model."""
     try:
@@ -131,6 +154,16 @@ def provider_label():
     }.get(active_provider(), "未配置")
 
 
+def _strip_unsupported(node):
+    """Gemini accepts a JSON-Schema subset; drop the keys it rejects."""
+    if isinstance(node, dict):
+        return {k: _strip_unsupported(v) for k, v in node.items()
+                if k not in ("additionalProperties", "strict", "$schema")}
+    if isinstance(node, list):
+        return [_strip_unsupported(v) for v in node]
+    return node
+
+
 def _gemini_chat(system, messages, max_tokens, schema=None):
     """Gemini uses systemInstruction plus role user/model turns."""
     key = _read_key("GEMINI_API_KEY")
@@ -149,6 +182,9 @@ def _gemini_chat(system, messages, max_tokens, schema=None):
     }
     if schema:
         payload["generationConfig"]["responseMimeType"] = "application/json"
+        # additionalProperties is not part of Gemini's schema dialect; sending it
+        # makes the request 400, which then looks like a model failure.
+        payload["generationConfig"]["responseSchema"] = _strip_unsupported(schema)
 
     # Fall back down the model ladder on rate limits — the free tier throttles
     # the strongest model first, and a throttled demo looks like a broken one.
@@ -174,10 +210,20 @@ def _gemini_chat(system, messages, max_tokens, schema=None):
     return None
 
 
-def _ollama_chat(system, messages, max_tokens, fmt=None):
+def _ollama_chat(system, messages, max_tokens, fmt=None, think=False, fast=False):
+    """Local chat. Thinking is OFF by default, and that is a measured decision.
+
+    qwen3 emits long <think> blocks before answering. On an M4 that took ~400s
+    per turn across the three LLM stages — unusable. With think=False the same
+    turn lands in ~5-20s. The quality cost is small here because the retrieved
+    passages already carry the reasoning: the model is summarising graded
+    evidence, not deriving it. Set MINGTU_THINK=1 to turn it back on.
+    """
+    model = OLLAMA_FAST_MODEL if (fast and _ollama_has(OLLAMA_FAST_MODEL)) else OLLAMA_MODEL
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model,
         "stream": False,
+        "think": think or os.environ.get("MINGTU_THINK", "").strip() in ("1", "true", "yes"),
         "options": {"temperature": 0.2, "num_predict": max_tokens},
         "messages": [{"role": "system", "content": system}] + _fold_system_into_user(messages),
     }
@@ -254,9 +300,28 @@ def _perplexity_chat(system, messages, max_tokens, json_mode=False):
     return data["choices"][0]["message"]["content"]
 
 
+def _loose_json(text):
+    """Parse a JSON object OR array out of a model reply.
+
+    Models wrap JSON in prose or code fences, and return a bare array where the
+    schema asked for an object. Insisting on one shape made whole stages fail.
+    """
+    if not text:
+        return None
+    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    for pattern in (r"\{.*\}", r"\[.*\]"):
+        m = re.search(pattern, text, re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                continue
+    return None
+
+
 # --- structured output (classify, rerank) -------------------------------------
 
-def call_json(system, user, schema, effort="low", max_tokens=4096):
+def call_json(system, user, schema, effort="low", max_tokens=4096, fast=False):
     """One structured-output call. Returns the parsed object, or None."""
     provider = active_provider()
 
@@ -292,14 +357,11 @@ def call_json(system, user, schema, effort="low", max_tokens=4096):
 
     if provider == "ollama":
         text = _ollama_chat(system + "\n\n只输出一个 JSON 对象，不要解释、不要代码块标记。",
-                            [{"role": "user", "content": user}], max_tokens, fmt=schema)
+                            [{"role": "user", "content": user}], max_tokens,
+                            fmt=schema, fast=fast)
         if not text:
             return None
-        m = re.search(r"\{.*\}", text, re.S)
-        try:
-            return json.loads(m.group(0)) if m else None
-        except Exception:
-            return None
+        return _loose_json(text)
 
     if provider == "gemini":
         text = _gemini_chat(
@@ -308,11 +370,7 @@ def call_json(system, user, schema, effort="low", max_tokens=4096):
             [{"role": "user", "content": user}], max_tokens, schema=schema)
         if not text:
             return None
-        m = re.search(r"\{.*\}", text, re.S)
-        try:
-            return json.loads(m.group(0)) if m else None
-        except Exception:
-            return None
+        return _loose_json(text)
 
     if provider == "perplexity":
         instruction = (
@@ -322,11 +380,7 @@ def call_json(system, user, schema, effort="low", max_tokens=4096):
         text = _perplexity_chat(instruction, [{"role": "user", "content": user}], max_tokens)
         if not text:
             return None
-        match = re.search(r"\{.*\}", text, re.S)
-        try:
-            return json.loads(match.group(0)) if match else None
-        except Exception:
-            return None
+        return _loose_json(text)
 
     return None
 

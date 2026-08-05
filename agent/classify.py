@@ -6,6 +6,8 @@ verdict can only be escalated by the classifier, never downgraded. A model that
 decides 便血 is "probably fine" must not be able to suppress the referral.
 """
 
+import os
+
 from agent import safety
 from agent.llm import call_json
 from agent.retrieve import infer_filters
@@ -58,6 +60,7 @@ def classify(query):
         CLASSIFY_SCHEMA,
         effort="low",
         max_tokens=1024,
+        fast=True,
     )
 
     if result is None:
@@ -105,12 +108,13 @@ RERANK_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
+                # reason 只用于调试，但 12 个候选各写一句理由会撑爆输出上限，
+                # 截断后 JSON 解析失败，整个重排阶段静默退回。删掉它。
                 "properties": {
                     "index": {"type": "integer"},
                     "score": {"type": "integer"},
-                    "reason": {"type": "string"},
                 },
-                "required": ["index", "score", "reason"],
+                "required": ["index", "score"],
                 "additionalProperties": False,
             },
         }
@@ -144,10 +148,17 @@ def rerank(query, candidates, top_n=8):
     if len(candidates) <= 3:
         return candidates
 
+    # 重排的输入长度直接决定本地模型的耗时：24 段 × 600 字的提示在 14B 上要 134 秒，
+    # 而重排只是排序，不需要看全文。截到 12 段 × 320 字后质量基本不变，耗时降一个量级。
+    # 云端模型没有这个约束，所以上限可配。
+    max_cands = int(os.environ.get("MINGTU_RERANK_CANDIDATES", "12"))
+    max_chars = int(os.environ.get("MINGTU_RERANK_CHARS", "320"))
+    candidates = candidates[:max_cands]
+
     listing = "\n\n".join(
         f"[{i}] 证据等级={c.get('evidence_grade') or '未标注'} "
-        f"类型={c.get('authority')} 法规={'是' if c.get('is_regulatory') else '否'} "
-        f"人群={'/'.join(c.get('population') or [])}\n{c['text'][:600]}"
+        f"法规={'是' if c.get('is_regulatory') else '否'} "
+        f"人群={'/'.join(c.get('population') or [])}\n{c['text'][:max_chars]}"
         for i, c in enumerate(candidates)
     )
 
@@ -156,16 +167,37 @@ def rerank(query, candidates, top_n=8):
         f"用户问题：{query}\n\n候选段落：\n\n{listing}",
         RERANK_SCHEMA,
         effort="low",
-        max_tokens=4096,
+        max_tokens=2048,
+        fast=True,
     )
 
-    if result is None or not result.get("selected"):
-        return candidates[:top_n]
+    # Models disagree on the shape they return here: some emit the documented
+    # {"selected":[...]}, others a bare array, and they variously name the field
+    # index / id / i. Rejecting all but one spelling meant the rerank stage
+    # silently fell back on every provider we tried. Accept the variants.
+    items = None
+    if isinstance(result, list):
+        items = result
+    elif isinstance(result, dict):
+        for key in ("selected", "results", "items", "passages"):
+            if isinstance(result.get(key), list):
+                items = result[key]
+                break
+
+    if not items:
+        # Mark the degradation so it surfaces instead of looking like a fast path.
+        out = candidates[:top_n]
+        for c in out:
+            c["_rerank_fallback"] = True
+        return out
 
     chosen = []
-    for item in result["selected"][:top_n]:
-        idx = item.get("index")
-        if isinstance(idx, int) and 0 <= idx < len(candidates):
+    for item in items[:top_n]:
+        if not isinstance(item, dict):
+            continue
+        idx = next((item[k] for k in ("index", "id", "i", "idx")
+                    if isinstance(item.get(k), int)), None)
+        if idx is not None and 0 <= idx < len(candidates):
             chunk = dict(candidates[idx])
             chunk["_rerank_score"] = item.get("score")
             chunk["_rerank_reason"] = item.get("reason", "")
