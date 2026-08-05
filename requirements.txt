@@ -11,8 +11,8 @@
 
 # ---- 直接依赖 ----------------------------------------------------------------
 anthropic==0.120.2      # claude-opus-5：风险分流、重排、作答（agent/llm.py, agent/core.py）
-openai==2.53.0          # text-embedding-3-large：建索引 + 每轮查询向量化（agent/index.py, agent/retrieve.py）
-numpy==2.5.1            # 443x3072 向量矩阵、点积检索、RRF 排序（agent/retrieve.py）
+openai==2.53.0          # 作答回落 + OpenAI 向量后端（agent/llm.py, agent/embed.py）
+numpy==2.5.1            # 向量矩阵、点积检索、RRF 排序（agent/retrieve.py, agent/embed.py）
 jieba==0.42.1           # 中文分词，BM25 的前置步骤（agent/index.py tokenize）
 rank-bm25==0.2.2        # BM25Okapi：菌株号/剂量/法规文号这类精确词靠它，向量检索会把它们糊掉
 
@@ -34,5 +34,15 @@ tqdm==4.70.0
 typing_extensions==4.16.0
 typing-inspection==0.4.2
 
-# 说明：Perplexity 实时检索（agent/live.py, tools/research.py）走的是 curl 子进程，
-# 不引入 SDK，所以这里没有对应的包。系统需要有 curl。
+# ---- 开发依赖 ----------------------------------------------------------------
+# tests/ 用 pytest。这里跟着一起装：多几 MB，换来「照着 README 装完就能跑测试」，
+# 值得。纯部署环境想省掉它，就把这一行删了单独维护一份部署清单。
+pytest==9.1.1
+
+# 说明一：Perplexity 实时检索（agent/live.py, tools/research.py）和本地 ollama
+# 向量后端（agent/embed.py）走的都是 curl 子进程，不引入 SDK，所以这里没有对应
+# 的包。但系统必须有 curl，否则这两条路会静默失效。
+#
+# 说明二：本地向量后端还需要 ollama 本体和 bge-m3 模型，那是系统级依赖，
+# 不归 pip 管：安装 ollama 之后执行  ollama pull bge-m3
+# 有本地后端就完全不需要 OPENAI_API_KEY，用户的健康问题也不会出境。

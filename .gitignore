@@ -4,6 +4,7 @@ venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
 
 # ---- 密钥 --------------------------------------------------------------------
 # .env 里是 ANTHROPIC / OPENAI / PERPLEXITY 的真实 key。
@@ -20,27 +21,36 @@ __pycache__/
 research/*.PARKED.txt
 
 # ---- 构建产物：knowledge/ ----------------------------------------------------
-# 结论：chunks.jsonl 和 vectors.npy 都不进版本库。理由按重要性排：
+# 结论：chunks.jsonl 和 vectors-*.npy 都不进版本库。理由按重要性排：
 #
 # 1) 这两个文件必须逐行对齐，不能分开管理。
-#    agent/retrieve.py 用同一个下标同时索引两者（self.vectors @ 查询向量 得到
-#    分数，再用 self.chunks[idx] 取文本）。只提交其中一个、或者两者出自不同
-#    次构建，下标就会错位 —— 表现是回答里的 [3] 指向另一段资料。
+#    agent/retrieve.py 用同一个下标同时索引两者（vectors @ 查询向量 得到分数，
+#    再用 chunks[idx] 取原文）。只提交其中一个、或者两者出自不同次构建，
+#    下标就会错位 —— 表现是回答里的 [3] 指向另一段资料。
 #    对一个要求「逐条标注来源、编造编号视为严重缺陷」的系统，这是安全缺陷，
-#    不是性能问题。两个一起忽略，永远由 `python -m agent.index build` 成对生成，
+#    不是性能问题。两个一起忽略、永远由 `python -m agent.index build` 成对生成，
 #    是唯一能保证它们同源的做法。
 #
-# 2) vectors.npy 是 5.4 MB 的 float32 二进制（443x3072），git 无法 diff，
-#    每次重建整体变化，提交几次就把仓库撑大，而且 review 时看不出改了什么。
+# 2) 向量文件按 embedding 后端分文件存（vectors-ollama_bge-m3.npy 1024 维、
+#    vectors-openai_text-embedding-3-large.npy 3072 维）。不同后端是不同的向量
+#    空间，跨空间算余弦相似度得到的是噪声。谁的机器上活着哪个后端是环境决定的，
+#    不是代码决定的，所以这类文件天然属于本地产物，不该跟着仓库走。
 #
-# 3) 真正的源在 research/*.md（提交），生成规则在 agent/chunker.py（提交）。
-#    产物可以完全重建，没有信息丢失。
+# 3) vectors-*.npy 是几 MB 的 float32 二进制，git 无法 diff，每次重建整体变化，
+#    提交几次就把仓库撑大，而且 review 时看不出改了什么。
 #
-# 代价要说清楚：重建 vectors.npy 要调一次 OpenAI embedding，花钱且需要 key；
-# chunks.jsonl 则是纯本地几秒钟的事。新机器部署时必须先跑一次 index build，
-# run.sh 会在索引缺失或行数与向量行数对不上时拦住启动并给出命令。
-knowledge/chunks.jsonl
-knowledge/vectors.npy
+# 4) 真正的源在 research/*.md（提交），生成规则在 agent/chunker.py 和
+#    agent/embed.py（提交）。产物可以完全重建，没有信息丢失。
+#
+# 代价要说清楚：新机器部署必须先跑一次 `python -m agent.index build`。
+# 走本地 ollama 后端只花时间不花钱；走 OpenAI 后端要调一次 embedding，花钱且
+# 需要 key。run.sh 会在索引缺失或行数与向量行数对不上时拦住启动并给出命令。
+#
+# 这里忽略整个目录而不是逐个文件名：knowledge/ 里没有一样东西是手写的，全部由
+# agent.index.build() 生成，将来加了清单文件、BM25 缓存之类也一样。逐个列文件名
+# 的写法会在下一个产物出现时默默漏掉它。目录空了 git 不跟踪也没关系，
+# build() 自己会 mkdir。
+knowledge/
 
 # ---- 编辑器与系统 ------------------------------------------------------------
 .DS_Store

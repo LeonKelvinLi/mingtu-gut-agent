@@ -19,15 +19,29 @@ from pathlib import Path
 
 import jieba
 import numpy as np
-from openai import OpenAI
 
 from agent.chunker import chunk_document
+from agent.embed import backend_id, embed as embed_texts
 
 REPO = Path(__file__).resolve().parent.parent
 RESEARCH_DIR = REPO / "research"
 INDEX_DIR = REPO / "knowledge"
 CHUNKS_PATH = INDEX_DIR / "chunks.jsonl"
-VECTORS_PATH = INDEX_DIR / "vectors.npy"
+
+
+def _slug(backend):
+    return backend.replace(":", "_").replace("/", "_")
+
+
+def vectors_path(backend=None):
+    """Vectors are stored per embedding backend.
+
+    Local (bge-m3, 1024-dim) and cloud (OpenAI, 3072-dim) live in different
+    vector spaces, so they get different files and can coexist. This is what
+    lets the same repo run fully offline on a laptop and on a cloud host.
+    """
+    from agent.embed import backend_id
+    return INDEX_DIR / f"vectors-{_slug(backend or backend_id())}.npy"
 
 EMBED_MODEL = "text-embedding-3-large"
 EMBED_BATCH = 64
@@ -70,17 +84,6 @@ def load_chunks():
     return chunks
 
 
-def embed(client, texts):
-    vectors = []
-    for i in range(0, len(texts), EMBED_BATCH):
-        batch = texts[i:i + EMBED_BATCH]
-        resp = client.embeddings.create(model=EMBED_MODEL, input=batch)
-        vectors.extend([d.embedding for d in resp.data])
-        print(f"  embedded {min(i + EMBED_BATCH, len(texts))}/{len(texts)}", flush=True)
-    arr = np.asarray(vectors, dtype=np.float32)
-    # Normalise once so retrieval is a plain dot product.
-    arr /= np.linalg.norm(arr, axis=1, keepdims=True) + 1e-9
-    return arr
 
 
 def build():
@@ -94,27 +97,24 @@ def build():
     regulatory = sum(1 for c in chunks if c["is_regulatory"])
     print(f"  {graded} carry an evidence grade, {regulatory} are regulatory")
 
-    client = OpenAI(api_key=openai_key())
-
-    # Probe one cheap call before committing to the batch — the OpenAI keys all
-    # share one billing cap, so a dead cap should fail on 1 request, not 400.
-    client.embeddings.create(model=EMBED_MODEL, input=["探针"])
-    print("  embedding probe OK")
-
-    vectors = embed(client, [c["text"] for c in chunks])
+    print(f"  向量后端：{backend_id()}")
+    vectors = embed_texts([c["text"] for c in chunks], progress=True)
 
     with CHUNKS_PATH.open("w", encoding="utf-8") as f:
         for chunk in chunks:
             f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
-    np.save(VECTORS_PATH, vectors)
-    print(f"wrote {CHUNKS_PATH} and {VECTORS_PATH} {vectors.shape}")
+    np.save(vectors_path(), vectors)
+    print(f"已写入 {CHUNKS_PATH} 和 {vectors_path()} {vectors.shape}")
 
 
 def load_index():
-    if not CHUNKS_PATH.exists() or not VECTORS_PATH.exists():
-        raise SystemExit("index missing — run: python -m agent.index build")
+    vpath = vectors_path()
+    if not CHUNKS_PATH.exists() or not vpath.exists():
+        raise SystemExit(
+            f"当前向量后端 {backend_id()} 还没有建过索引。\n"
+            f"请运行： python -m agent.index build")
     chunks = [json.loads(line) for line in CHUNKS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
-    vectors = np.load(VECTORS_PATH)
+    vectors = np.load(vpath)
     return chunks, vectors
 
 

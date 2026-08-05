@@ -15,7 +15,7 @@ import re
 import numpy as np
 from rank_bm25 import BM25Okapi
 
-from agent.index import load_index, openai_key, tokenize, EMBED_MODEL
+from agent.index import load_index, tokenize
 
 RRF_K = 60           # standard RRF damping constant
 CANDIDATES = 30      # per retriever, before fusion
@@ -40,12 +40,15 @@ class Retriever:
 
     # -- embedding -----------------------------------------------------------
     def _embed_query(self, query):
-        if self._client is None:
-            from openai import OpenAI
-            self._client = OpenAI(api_key=openai_key())
-        resp = self._client.embeddings.create(model=EMBED_MODEL, input=[query])
-        v = np.asarray(resp.data[0].embedding, dtype=np.float32)
-        return v / (np.linalg.norm(v) + 1e-9)
+        """Embed via the same backend that built the index.
+
+        Routing this through agent.embed rather than calling a provider directly
+        is what keeps the query and the corpus in one vector space — the earlier
+        hardcoded OpenAI call silently produced 3072-dim queries against a
+        1024-dim local index.
+        """
+        from agent.embed import embed as embed_texts
+        return embed_texts([query])[0]
 
     # -- fusion --------------------------------------------------------------
     def _fuse(self, query):

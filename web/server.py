@@ -41,8 +41,8 @@ REPO = WEB_DIR.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from agent.core import Agent            # noqa: E402  路径要先就位
-from agent.llm import MODEL, anthropic_key  # noqa: E402
+from agent.core import Agent                       # noqa: E402  路径要先就位
+from agent.llm import available, provider_label    # noqa: E402
 
 INDEX_HTML = WEB_DIR / "index.html"
 
@@ -78,11 +78,12 @@ RISK_LABELS = {
     "normal": "一般咨询",
 }
 
-# 面向用户的失败说明。核心管线返回的 error 码本身不给浏览器解释责任。
+# 面向用户的失败说明。core 返回的是 error 码，把它翻译成人话是这一层的事。
+# 遇到没见过的码走 DEFAULT_NOTICE：管线换了错误码，页面也不会露出英文码。
 NOTICES = {
-    "no_anthropic_key": (
-        "服务器未配置 ANTHROPIC_API_KEY，系统处于降级模式："
-        "安全层与检索层正常工作，但回答无法生成。"
+    "no_model_key": (
+        "服务器没有配置任何模型 API Key，系统处于降级模式："
+        "报警症状筛查与资料检索正常工作，但回答无法生成。"
     ),
     "generation_failed": "这一轮模型调用没有成功返回，请再问一次。",
     "validation_failed": (
@@ -90,6 +91,16 @@ NOTICES = {
         "不会把没有来源支撑的说法发给你。"
     ),
 }
+DEFAULT_NOTICE = "这一轮没有产出可用的回答，请再问一次。"
+
+
+def live_available():
+    """实时检索是否可用。问的是 live.py 自己用的那个密钥函数，不另起一套判断。"""
+    try:
+        from agent.live import perplexity_key
+        return bool(perplexity_key())
+    except BaseException:
+        return False
 
 
 # --- 载荷整形 -----------------------------------------------------------------
@@ -173,7 +184,7 @@ def build_payload(result, elapsed):
     return {
         "ok": not error,
         "error": error,
-        "notice": NOTICES.get(error) if error else None,
+        "notice": NOTICES.get(error, DEFAULT_NOTICE) if error else None,
         "answer": result.get("answer") or "",
         "escalated": bool(result.get("escalated")),
         "sources": source_cards(result.get("sources") or []),
@@ -191,7 +202,7 @@ def build_payload(result, elapsed):
             "red_flags": routing.get("red_flags") or [],
             "classifier_fallback": bool(routing.get("_fallback")),
             "gate_problems": result.get("problems") or [],
-            "model": MODEL,
+            "provider": result.get("provider") or provider_label(),
             "elapsed": round(elapsed, 1),
         },
     }
@@ -205,6 +216,7 @@ class Service:
     def __init__(self):
         self.agent = None
         self.chunks = 0
+        self.warm = False
         self.slots = threading.BoundedSemaphore(MAX_CONCURRENT)
         self._busy = 0
         self._lock = threading.Lock()
@@ -214,12 +226,13 @@ class Service:
         self.agent = Agent()
         self.chunks = len(self.agent.retriever.chunks)
         if warmup:
-            # 预热同时做两件事：把 OpenAI 客户端的惰性初始化从并发路径里拿掉，
-            # 并在第一个用户提问之前就验证嵌入密钥是通的。
+            # 走一次真实检索来预热：把嵌入客户端的惰性初始化从并发路径里拿掉，
+            # 顺带在第一个用户提问之前就验证嵌入链路是通的。
             try:
-                self.agent.retriever._embed_query("肠道菌群")
+                self.agent.retriever.search("肠道菌群", None, top_n=1)
+                self.warm = True
             except Exception as exc:
-                print(f"  预热失败（嵌入接口不可用）：{exc}", file=sys.stderr)
+                print(f"  预热失败（嵌入链路不可用）：{exc}", file=sys.stderr)
         return time.time() - t0
 
     def busy(self):
@@ -239,30 +252,13 @@ class Service:
             self.slots.release()
 
     def health(self):
-        from agent.index import openai_key
-
-        def present(fn):
-            try:
-                return bool(fn())
-            except BaseException:
-                return False
-
-        try:
-            from tools.research import key as perplexity_key
-        except BaseException:
-            perplexity_key = lambda: ""  # noqa: E731
-
-        keys = {
-            "anthropic": present(anthropic_key),
-            "openai": present(openai_key),
-            "perplexity": present(perplexity_key),
-        }
         return {
             "ok": True,
             "chunks": self.chunks,
-            "model": MODEL,
-            "keys": keys,
-            "degraded": not keys["anthropic"],
+            "warm": self.warm,
+            "provider": provider_label(),
+            "degraded": not available(),
+            "live": live_available(),
             "busy": self.busy(),
             "capacity": MAX_CONCURRENT,
         }
@@ -400,6 +396,9 @@ def main():
     parser.add_argument("--no-warmup", action="store_true", help="跳过启动预热")
     args = parser.parse_args()
 
+    # 日志常被重定向到文件，块缓冲会让启动信息迟迟不出现。
+    sys.stdout.reconfigure(line_buffering=True)
+
     print("明途 · 肠道菌群健康顾问")
     print("  正在加载索引与检索模型…")
     try:
@@ -409,15 +408,12 @@ def main():
         return 1
 
     health = SERVICE.health()
-    keys = health["keys"]
-    state = lambda ok: "已配置" if ok else "未配置"  # noqa: E731
     print(f"  索引 {health['chunks']} 段资料，用时 {seconds:.1f} 秒")
-    print(f"  密钥  Anthropic {state(keys['anthropic'])}"
-          f" · OpenAI {state(keys['openai'])}"
-          f" · Perplexity {state(keys['perplexity'])}")
+    print(f"  作答模型 {health['provider']}"
+          f" · 实时检索 {'可用' if health['live'] else '不可用'}")
     if health["degraded"]:
-        print("  注意：未配置 ANTHROPIC_API_KEY，服务以降级模式运行——"
-              "安全层与检索层可用，回答无法生成。")
+        print("  注意：没有配置任何模型 API Key，服务以降级模式运行——"
+              "报警症状筛查与资料检索可用，回答无法生成。")
 
     server = ThreadingHTTPServer((args.host, args.port), ChatHandler)
     server.daemon_threads = True

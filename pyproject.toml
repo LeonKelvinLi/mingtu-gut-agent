@@ -1,7 +1,7 @@
 # mingtu 项目元数据
 #
-# 这是一个应用，不是要发布到 PyPI 的库：跑法是 `python -m agent.index build`、
-# `python -m web.app`，从仓库根目录直接导入 agent/ 和 tools/。
+# 这是一个应用，不是要发布到 PyPI 的库：跑法是 ./run.sh、python cli.py、
+# python -m agent.index build，从仓库根目录直接导入 agent/ 和 tools/。
 # 因此这里刻意不声明 [build-system] —— 声明一个永远不会被调用的构建后端
 # 只会让人以为可以 pip install 这个目录。依赖的真实来源是 requirements.txt。
 
@@ -22,16 +22,25 @@ dependencies = [
     "rank-bm25==0.2.2",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
 # uv 创建的虚拟环境：告诉 uv 这个目录不是可构建的包，只是一个应用工作区，
 # 否则 uv sync 会去找构建后端然后失败。
 [tool.uv]
 package = false
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 从仓库根目录跑，tests 里的 from agent import ... 才导得到。
+pythonpath = ["."]
+
 [tool.mingtu]
 # 产品边界，写在元数据里是为了让接手的人第一眼看到，而不是翻代码才发现。
-# 定位是科普与就医导航，不是诊断工具；急症判定由 agent/safety.py 确定性完成，
-# 模型分类器只能把风险等级往上调，不能往下调。
 positioning = "科普与就医导航，非诊断工具"
-emergency_screen = "agent/safety.py:screen_input（确定性，不依赖模型）"
+# 急症判定确定性完成，不依赖模型也不依赖网络；模型分类器只能把风险等级往上调。
+emergency_screen = "agent/safety.py:screen_input"
 answer_language = "zh-CN"
 index_build = "python -m agent.index build"
+# 向量后端可插拔：本地 ollama 优先，其次 OpenAI。两者向量空间不同，索引分文件存。
+embed_backends = "ollama:bge-m3 → openai:text-embedding-3-large"

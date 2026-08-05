@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#136f5b">
+<title>肠道菌群健康顾问</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23136f5b'/%3E%3Cpath d='M9 22c0-5.5 3.1-9 7-9s7 3.5 7 9' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='9' r='2.3' fill='%23ffffff'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#f4f6f6;
+  --panel:#ffffff;
+  --panel-2:#fbfcfc;
+  --ink:#151a1e;
+  --ink-2:#3c474f;
+  --muted:#6a767f;
+  --line:#e2e7e9;
+  --line-2:#eef2f3;
+  --accent:#136f5b;
+  --accent-ink:#0e5645;
+  --accent-soft:#e8f2ef;
+  --user-bg:#1d2b31;
+  --user-ink:#f4f7f7;
+  --alarm:#b02b1e;
+  --alarm-ink:#8d2318;
+  --alarm-soft:#fdf3f1;
+  --alarm-line:#f0cec8;
+  --warn:#8a5f0d;
+  --warn-soft:#fdf5e6;
+  --warn-line:#ecdcb4;
+  --r:12px;
+  --shadow:0 1px 2px rgba(18,28,32,.05),0 6px 20px rgba(18,28,32,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0f1416;
+    --panel:#171e21;
+    --panel-2:#1c2427;
+    --ink:#e8eded;
+    --ink-2:#c3cccd;
+    --muted:#8d9a9d;
+    --line:#263034;
+    --line-2:#212a2d;
+    --accent:#3fa88d;
+    --accent-ink:#7fcbb6;
+    --accent-soft:#162c27;
+    --user-bg:#26343a;
+    --user-ink:#eef4f4;
+    --alarm:#e07a6c;
+    --alarm-ink:#f0a396;
+    --alarm-soft:#2a1917;
+    --alarm-line:#4a2620;
+    --warn:#d9b062;
+    --warn-soft:#2a2317;
+    --warn-line:#4a3d20;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
+    "Microsoft YaHei","Noto Sans CJK SC","Source Han Sans SC","Segoe UI",sans-serif;
+  font-size:15px;line-height:1.78;-webkit-font-smoothing:antialiased;
+  -webkit-text-size-adjust:100%;
+}
+button,textarea{font:inherit;color:inherit}
+.app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:940px;margin:0 auto;background:var(--bg)}
+
+/* 顶栏 */
+.top{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:5;
+}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
+.mark{width:32px;height:32px;border-radius:9px;background:var(--accent);flex:none;position:relative}
+.mark::before{content:"";position:absolute;left:8px;right:8px;bottom:9px;height:9px;border:2.4px solid #fff;border-bottom:0;border-radius:9px 9px 0 0}
+.mark::after{content:"";position:absolute;left:13.5px;top:7px;width:5px;height:5px;border-radius:50%;background:#fff}
+.brand h1{margin:0;font-size:16px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.tagline{margin:1px 0 0;font-size:12.5px;line-height:1.4;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top-right{display:flex;align-items:center;gap:10px;flex:none}
+.status{
+  font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;
+  padding:3px 10px;white-space:nowrap;
+}
+.status.ready{color:var(--accent-ink);border-color:var(--accent);background:var(--accent-soft)}
+.status.degraded{color:var(--warn);border-color:var(--warn-line);background:var(--warn-soft)}
+.ghost{
+  background:transparent;border:1px solid var(--line);color:var(--ink-2);
+  border-radius:8px;padding:5px 11px;font-size:13px;cursor:pointer;white-space:nowrap;
+}
+.ghost:hover{border-color:var(--accent);color:var(--accent-ink)}
+
+/* 通知条 */
+.banner{
+  margin:0;padding:11px 20px;font-size:13.5px;line-height:1.6;
+  background:var(--warn-soft);color:var(--warn);border-bottom:1px solid var(--warn-line);
+}
+
+/* 消息流 */
+#stream{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 20px 6px;-webkit-overflow-scrolling:touch}
+.intro{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 18px 16px;box-shadow:var(--shadow)}
+.intro h2{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--ink-2)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{
+  background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+  padding:7px 14px;font-size:13.5px;color:var(--ink-2);cursor:pointer;text-align:left;
+}
+.chip:hover{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
+.intro-note{margin:14px 0 0;font-size:12.5px;line-height:1.7;color:var(--muted)}
+
+.msg{margin:0 0 18px;max-width:100%}
+.msg.user{display:flex;justify-content:flex-end}
+.bubble{
+  background:var(--user-bg);color:var(--user-ink);border-radius:14px 14px 4px 14px;
+  padding:10px 15px;max-width:82%;white-space:pre-wrap;word-break:break-word;font-size:14.5px;
+}
+.card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:17px 18px;box-shadow:var(--shadow);
+}
+.card.alarm{border-color:var(--alarm-line);background:var(--alarm-soft);border-left:4px solid var(--alarm)}
+.card.failed{border-color:var(--warn-line);background:var(--warn-soft)}
+.alarm-head{
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  margin:-2px 0 12px;font-size:14.5px;font-weight:600;color:var(--alarm-ink);
+}
+.alarm-head .dot{width:8px;height:8px;border-radius:50%;background:var(--alarm);flex:none}
+.flag{
+  font-size:12px;font-weight:400;color:var(--alarm-ink);background:var(--panel);
+  border:1px solid var(--alarm-line);border-radius:999px;padding:1px 9px;
+}
+.notice{
+  font-size:13.5px;line-height:1.7;color:var(--warn);background:var(--warn-soft);
+  border:1px solid var(--warn-line);border-radius:9px;padding:10px 13px;margin:0 0 13px;
+}
+.card.failed .notice{background:var(--panel);}
+
+/* 正文 */
+.body{color:var(--ink);word-break:break-word}
+.body p{margin:0 0 12px}
+.body p:last-child{margin-bottom:0}
+.body h4{margin:16px 0 8px;font-size:14.5px;font-weight:600}
+.body ul,.body ol{margin:0 0 12px;padding-left:22px}
+.body li{margin:0 0 5px}
+.body hr{border:0;border-top:1px solid var(--line-2);margin:14px 0}
+.body strong{font-weight:600}
+.cite{
+  display:inline-block;vertical-align:.35em;font-size:10.5px;line-height:16px;
+  min-width:17px;height:17px;padding:0 4px;margin:0 1px;
+  background:var(--accent-soft);color:var(--accent-ink);border:1px solid transparent;
+  border-radius:5px;cursor:pointer;font-variant-numeric:tabular-nums;
+}
+.cite:hover{border-color:var(--accent)}
+
+/* 元信息 */
+.meta{display:flex;flex-wrap:wrap;gap:6px 8px;margin-top:15px;padding-top:13px;border-top:1px solid var(--line-2)}
+.pill{font-size:12px;line-height:1.6;color:var(--muted);background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:2px 9px}
+.pill.on{color:var(--accent-ink);background:var(--accent-soft);border-color:transparent}
+.pill.warn{color:var(--warn);background:var(--warn-soft);border-color:var(--warn-line)}
+
+/* 来源 */
+.sources{margin-top:15px;padding-top:13px;border-top:1px solid var(--line-2)}
+.sources h3{margin:0 0 10px;font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.02em}
+.src{display:flex;gap:11px;padding:10px 12px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel-2);margin-bottom:8px}
+.src:last-child{margin-bottom:0}
+.src.flash{border-color:var(--accent);background:var(--accent-soft)}
+.src-n{
+  flex:none;width:21px;height:21px;border-radius:6px;background:var(--accent);color:#fff;
+  font-size:11.5px;line-height:21px;text-align:center;font-variant-numeric:tabular-nums;
+}
+.src-main{min-width:0;flex:1}
+.src-top{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-bottom:2px}
+.src-doc{font-size:13.5px;font-weight:600}
+.grade{font-size:11.5px;line-height:1.7;border-radius:5px;padding:0 7px;white-space:nowrap}
+.g-A{background:#e4f1ec;color:#0d5c48}
+.g-B{background:#e6eef8;color:#1d4c81}
+.g-C{background:#f9f0dc;color:#7f5c12}
+.g-D{background:#f6ebe4;color:#7d4f2c}
+.g-E{background:#eceff0;color:#4f5b62}
+.g-none{background:#eceff0;color:#5b666d}
+.g-live{background:#efeaf6;color:#584080}
+@media (prefers-color-scheme:dark){
+  .g-A{background:#123027;color:#7fcbb6}
+  .g-B{background:#132539;color:#8db9e8}
+  .g-C{background:#2f2812;color:#dcbc6c}
+  .g-D{background:#2e211a;color:#d5a184}
+  .g-E{background:#232b2e;color:#a8b4b8}
+  .g-none{background:#232b2e;color:#a8b4b8}
+  .g-live{background:#241d33;color:#b8a4e0}
+}
+.src-heading{font-size:12.5px;line-height:1.6;color:var(--muted);word-break:break-word}
+.src-links{margin-top:5px;display:flex;flex-wrap:wrap;gap:6px 12px}
+.src-links a{font-size:12px;color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--line);word-break:break-all}
+.src-links a:hover{border-color:var(--accent)}
+
+/* 检索详情 */
+details.detail{margin-top:11px}
+details.detail>summary{
+  font-size:12.5px;color:var(--muted);cursor:pointer;list-style:none;
+  display:inline-flex;align-items:center;gap:5px;
+}
+details.detail>summary::-webkit-details-marker{display:none}
+details.detail>summary::before{content:"+";font-size:13px;line-height:1}
+details.detail[open]>summary::before{content:"−"}
+.detail-body{margin-top:9px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel-2);padding:11px 13px}
+.kv{display:flex;gap:10px;font-size:12.5px;line-height:1.75;margin-bottom:4px}
+.kv:last-child{margin-bottom:0}
+.kv dt{flex:none;width:70px;color:var(--muted);margin:0}
+.kv dd{margin:0;color:var(--ink-2);word-break:break-word}
+
+/* 等待 */
+.pending{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13.5px}
+.dots{display:inline-flex;gap:4px}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.35;animation:blink 1.2s infinite}
+.dots i:nth-child(2){animation-delay:.2s}
+.dots i:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,60%,100%{opacity:.3}30%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.dots i{animation:none;opacity:.6}}
+.elapsed{font-variant-numeric:tabular-nums}
+
+/* 输入区 */
+.composer{padding:12px 20px 14px;background:var(--panel);border-top:1px solid var(--line);padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+#form{display:flex;gap:10px;align-items:flex-end}
+#input{
+  flex:1;resize:none;border:1px solid var(--line);border-radius:11px;background:var(--panel-2);
+  padding:10px 13px;max-height:150px;min-height:44px;line-height:1.6;font-size:15px;
+}
+#input:focus{outline:none;border-color:var(--accent);background:var(--panel)}
+#send{
+  flex:none;height:44px;padding:0 20px;border:0;border-radius:11px;
+  background:var(--accent);color:#fff;font-size:14.5px;font-weight:500;cursor:pointer;
+}
+#send:hover{background:var(--accent-ink)}
+#send:disabled{opacity:.45;cursor:default}
+.legal{margin:9px 2px 0;font-size:11.5px;line-height:1.65;color:var(--muted)}
+
+@media (max-width:640px){
+  body{font-size:14.5px}
+  .top{padding:11px 14px}
+  .tagline{display:none}
+  #stream{padding:14px 14px 4px}
+  .card{padding:14px 15px}
+  .bubble{max-width:88%}
+  .composer{padding:10px 14px 12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+  .kv dt{width:60px}
+  .banner{padding:10px 14px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <div>
+        <h1>肠道菌群健康顾问</h1>
+        <p class="tagline">按证据等级说话的科普与就医导航</p>
+      </div>
+    </div>
+    <div class="top-right">
+      <span class="status" id="status">连接中</span>
+      <button class="ghost" id="reset" type="button">清空对话</button>
+    </div>
+  </header>
+
+  <p class="banner" id="banner" hidden></p>
+
+  <main id="stream" aria-live="polite" aria-busy="false">
+    <section class="intro" id="intro">
+      <h2>可以这样问</h2>
+      <div class="chips" id="chips"></div>
+      <p class="intro-note">系统先做报警症状筛查，再从分级证据库检索资料回答；每个结论都会标注来源编号，资料不足时会直接说没有覆盖，不用不对题的内容凑答案。</p>
+    </section>
+  </main>
+
+  <footer class="composer">
+    <form id="form">
+      <textarea id="input" rows="1" maxlength="2000" placeholder="描述你的情况，或问一个关于肠道菌群的问题" autocomplete="off"></textarea>
+      <button id="send" type="submit">发送</button>
+    </form>
+    <p class="legal">本工具提供健康科普与就医导航，不构成医疗诊断或治疗建议，也不能替代医生判断。出现便血、黑便、呕血、不明原因消瘦、持续呕吐等症状，请及时到消化内科就诊。</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STARTERS = [
+    "抗生素相关性腹泻，哪些菌株有人体证据？",
+    "每天该吃多少膳食纤维，中国人实际吃到多少？",
+    "普通食品能不能宣称调节肠道菌群？",
+    "益生菌必须冷藏吗，菌种越多越好吗？",
+    "我最近大便带血，吃益生菌管用吗？"
+  ];
+
+  var GRADE_CLASS = { A: "g-A", B: "g-B", C: "g-C", D: "g-D", E: "g-E" };
+  var REQUEST_TIMEOUT = 300000;
+  var HISTORY_LIMIT = 12;
+
+  var stream = document.getElementById("stream");
+  var intro = document.getElementById("intro");
+  var chips = document.getElementById("chips");
+  var form = document.getElementById("form");
+  var input = document.getElementById("input");
+  var sendBtn = document.getElementById("send");
+  var resetBtn = document.getElementById("reset");
+  var statusEl = document.getElementById("status");
+  var banner = document.getElementById("banner");
+
+  var history = [];
+  var pending = false;
+  var counter = 0;
+  var coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+
+  /* ---------- 基础工具 ---------- */
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function scrollDown() {
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  function isCJK(ch) {
+    return /[\u2E80-\u9FFF\u3000-\u303F\uFF00-\uFFEF]/.test(ch);
+  }
+
+  /* 把多行合成一段：中文之间不补空格，英文之间补。 */
+  function joinLines(lines) {
+    var out = "";
+    for (var i = 0; i < lines.length; i++) {
+      var s = lines[i].trim();
+      if (!s) continue;
+      if (!out) { out = s; continue; }
+      var a = out.charAt(out.length - 1), b = s.charAt(0);
+      out += (isCJK(a) || isCJK(b)) ? "" : " ";
+      out += s;
+    }
+    return out;
+  }
+
+  /* ---------- 正文渲染 ----------
+     模型输出一律按纯文本处理，只识别 **加粗**、[编号] 引用、列表和标题，
+     全部用 DOM 接口构造，不走 innerHTML。 */
+
+  var INLINE = /(\*\*[^*\n]+\*\*)|(\[\d{1,2}\])/g;
+
+  function appendInline(parent, text, cited, msgId) {
+    var last = 0, m;
+    INLINE.lastIndex = 0;
+    while ((m = INLINE.exec(text)) !== null) {
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      if (m[1]) {
+        parent.appendChild(el("strong", null, m[1].slice(2, -2)));
+      } else {
+        var n = parseInt(m[2].slice(1, -1), 10);
+        if (cited && cited.indexOf(n) !== -1) {
+          var btn = el("button", "cite", String(n));
+          btn.type = "button";
+          btn.setAttribute("aria-label", "第 " + n + " 条资料");
+          btn.dataset.target = "src-" + msgId + "-" + n;
+          parent.appendChild(btn);
+        } else {
+          parent.appendChild(document.createTextNode(m[2]));
+        }
+      }
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function renderBody(text, cited, msgId) {
+    var box = el("div", "body");
+    var lines = String(text || "").replace(/\r/g, "").split("\n");
+    var para = [], list = null, item = null;
+
+    function flushPara() {
+      if (!para.length) return;
+      var p = el("p");
+      appendInline(p, joinLines(para), cited, msgId);
+      box.appendChild(p);
+      para = [];
+    }
+    function closeList() { list = null; item = null; }
+
+    for (var i = 0; i < lines.length; i++) {
+      var raw = lines[i];
+      var line = raw.trim();
+
+      if (!line) { flushPara(); closeList(); continue; }
+
+      if (/^-{3,}$/.test(line) || /^\*{3,}$/.test(line)) {
+        flushPara(); closeList(); box.appendChild(el("hr")); continue;
+      }
+
+      var heading = line.match(/^#{1,6}\s+(.*)$/);
+      if (heading) {
+        flushPara(); closeList();
+        box.appendChild(el("h4", null, heading[1]));
+        continue;
+      }
+
+      var ordered = line.match(/^(\d{1,2})[.、)]\s+(.*)$/);
+      var bullet = line.match(/^[-*·•]\s+(.*)$/);
+
+      if (ordered || bullet) {
+        flushPara();
+        var want = ordered ? "OL" : "UL";
+        if (!list || list.tagName !== want) {
+          list = el(ordered ? "ol" : "ul");
+          box.appendChild(list);
+        }
+        item = el("li");
+        appendInline(item, (ordered ? ordered[2] : bullet[1]), cited, msgId);
+        list.appendChild(item);
+        continue;
+      }
+
+      /* 缩进的续行属于上一个列表项 */
+      if (item && /^\s/.test(raw)) {
+        var tail = item.textContent.slice(-1);
+        item.appendChild(document.createTextNode(isCJK(tail) || isCJK(line.charAt(0)) ? "" : " "));
+        appendInline(item, line, cited, msgId);
+        continue;
+      }
+
+      closeList();
+      para.push(line);
+    }
+    flushPara();
+    return box;
+  }
+
+  /* ---------- 消息卡片 ---------- */
+
+  function pill(text, kind) {
+    return el("span", "pill" + (kind ? " " + kind : ""), text);
+  }
+
+  function addUser(text) {
+    var wrap = el("div", "msg user");
+    wrap.appendChild(el("div", "bubble", text));
+    stream.appendChild(wrap);
+    scrollDown();
+  }
+
+  function addPending() {
+    var wrap = el("div", "msg");
+    var card = el("div", "card");
+    var row = el("div", "pending");
+    var dots = el("span", "dots");
+    dots.appendChild(el("i"));
+    dots.appendChild(el("i"));
+    dots.appendChild(el("i"));
+    var time = el("span", "elapsed", "0 秒");
+    row.appendChild(dots);
+    row.appendChild(el("span", null, "正在检索并核对证据"));
+    row.appendChild(time);
+    card.appendChild(row);
+    wrap.appendChild(card);
+    stream.appendChild(wrap);
+    scrollDown();
+
+    var start = Date.now();
+    var timer = setInterval(function () {
+      time.textContent = Math.round((Date.now() - start) / 1000) + " 秒";
+    }, 1000);
+    return { node: wrap, stop: function () { clearInterval(timer); } };
+  }
+
+  function buildSources(sources, msgId) {
+    var box = el("div", "sources");
+    box.appendChild(el("h3", null, "本轮引用的资料"));
+    sources.forEach(function (s) {
+      var row = el("div", "src");
+      row.id = "src-" + msgId + "-" + s.n;
+      row.appendChild(el("span", "src-n", String(s.n)));
+
+      var main = el("div", "src-main");
+      var top = el("div", "src-top");
+      top.appendChild(el("span", "src-doc", s.doc || "未标注来源"));
+      if (s.is_live) {
+        top.appendChild(el("span", "grade g-live", "实时检索 · 未分级"));
+      } else {
+        top.appendChild(el("span", "grade " + (GRADE_CLASS[s.grade] || "g-none"), s.grade_label));
+      }
+      main.appendChild(top);
+
+      if (s.heading) main.appendChild(el("div", "src-heading", s.heading));
+
+      if (s.links && s.links.length) {
+        var links = el("div", "src-links");
+        s.links.forEach(function (link) {
+          var a = el("a", null, link.label);
+          a.href = link.url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          links.appendChild(a);
+        });
+        main.appendChild(links);
+      }
+      row.appendChild(main);
+      box.appendChild(row);
+    });
+    return box;
+  }
+
+  function kv(list, label, value) {
+    var row = el("div", "kv");
+    row.appendChild(el("dt", null, label));
+    row.appendChild(el("dd", null, value));
+    list.appendChild(row);
+  }
+
+  function buildDetail(stats) {
+    var wrap = el("details", "detail");
+    wrap.appendChild(el("summary", null, "本轮检索详情"));
+    var body = el("div", "detail-body");
+    var list = el("dl");
+    list.style.margin = "0";
+
+    if (stats.sub_queries && stats.sub_queries.length) {
+      kv(list, "检索式", stats.sub_queries.join("　|　"));
+    }
+    if (stats.category) kv(list, "问题分类", stats.category);
+    kv(list, "相关人群", (stats.populations && stats.populations.length) ? stats.populations.join("、") : "未限定");
+    kv(list, "风险分流", stats.risk_label + (stats.classifier_fallback ? "（确定性兜底）" : "（模型分类 + 确定性筛查）"));
+    kv(list, "资料", "检索 " + stats.passages + " 条，其中实时 " + stats.live_passages + " 条，回答引用 " + stats.cited + " 条");
+    kv(list, "生成", (stats.provider || "未配置") + "，合规重写 " + stats.repairs + " 次");
+    if (stats.gate_problems && stats.gate_problems.length) {
+      kv(list, "校验拦截", stats.gate_problems.join("；"));
+    }
+    body.appendChild(list);
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function addAnswer(payload) {
+    var msgId = ++counter;
+    var stats = payload.stats || {};
+    var sources = payload.sources || [];
+    var cited = sources.map(function (s) { return s.n; });
+
+    var wrap = el("div", "msg");
+    var card = el("div", "card" + (payload.escalated ? " alarm" : (payload.error ? " failed" : "")));
+
+    if (payload.escalated) {
+      var head = el("div", "alarm-head");
+      head.appendChild(el("span", "dot"));
+      head.appendChild(el("span", null, "需要尽快就医"));
+      (stats.red_flags || []).forEach(function (flag) {
+        head.appendChild(el("span", "flag", flag));
+      });
+      card.appendChild(head);
+    }
+
+    if (payload.notice) card.appendChild(el("p", "notice", payload.notice));
+
+    card.appendChild(renderBody(payload.answer, cited, msgId));
+
+    var meta = el("div", "meta");
+    if (payload.escalated) {
+      meta.appendChild(pill("确定性安全层直接输出，未经模型生成", "warn"));
+      meta.appendChild(pill("风险分流：" + (stats.risk_label || "急症转诊")));
+    } else {
+      meta.appendChild(pill("检索资料 " + (stats.passages || 0) + " 条"));
+      meta.appendChild(pill("回答引用 " + (stats.cited || 0) + " 条"));
+      if (stats.used_live) {
+        meta.appendChild(pill("实时检索：已启用（" + (stats.live_passages || 0) + " 条）", "on"));
+      } else {
+        meta.appendChild(pill("实时检索：未启用"));
+      }
+      if (stats.repairs) meta.appendChild(pill("合规重写 " + stats.repairs + " 次", "warn"));
+      meta.appendChild(pill("风险分流：" + (stats.risk_label || "一般咨询")));
+    }
+    if (stats.elapsed) meta.appendChild(pill("用时 " + stats.elapsed + " 秒"));
+    card.appendChild(meta);
+
+    if (sources.length) card.appendChild(buildSources(sources, msgId));
+    if (!payload.escalated) card.appendChild(buildDetail(stats));
+
+    wrap.appendChild(card);
+    stream.appendChild(wrap);
+    scrollDown();
+  }
+
+  function addError(text) {
+    var wrap = el("div", "msg");
+    var card = el("div", "card failed");
+    card.appendChild(el("p", "notice", text));
+    wrap.appendChild(card);
+    stream.appendChild(wrap);
+    scrollDown();
+  }
+
+  /* ---------- 交互 ---------- */
+
+  stream.addEventListener("click", function (e) {
+    var btn = e.target.closest ? e.target.closest(".cite") : null;
+    if (!btn) return;
+    var target = document.getElementById(btn.dataset.target);
+    if (!target) return;
+    var previous = stream.querySelector(".src.flash");
+    if (previous) previous.classList.remove("flash");
+    target.classList.add("flash");
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+
+  function setPending(on) {
+    pending = on;
+    sendBtn.disabled = on;
+    input.disabled = on;
+    stream.setAttribute("aria-busy", on ? "true" : "false");
+    sendBtn.textContent = on ? "回答中" : "发送";
+  }
+
+  function ask(message) {
+    if (pending || !message) return;
+    if (intro) intro.hidden = true;
+
+    addUser(message);
+    setPending(true);
+    var wait = addPending();
+
+    var controller = new AbortController();
+    var killer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT);
+
+    fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: message, history: history }),
+      signal: controller.signal
+    }).then(function (res) {
+      return res.json().then(function (data) { return { status: res.status, data: data }; });
+    }).then(function (out) {
+      wait.stop();
+      wait.node.remove();
+      if (out.status !== 200) {
+        addError(out.data && out.data.message ? out.data.message : "服务返回了错误，请再试一次。");
+        return;
+      }
+      addAnswer(out.data);
+      if (out.data.ok) {
+        history.push({ role: "user", content: message });
+        history.push({ role: "assistant", content: out.data.answer });
+        if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
+      }
+    }).catch(function (err) {
+      wait.stop();
+      wait.node.remove();
+      addError(err && err.name === "AbortError"
+        ? "这一轮等待超时了，请再问一次，或把问题拆得更具体一些。"
+        : "连接服务失败，请确认服务仍在运行后重试。");
+    }).then(function () {
+      clearTimeout(killer);
+      setPending(false);
+      if (!coarse) input.focus();
+    });
+  }
+
+  function autosize() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 150) + "px";
+  }
+
+  function submit() {
+    var text = input.value.trim();
+    if (!text || pending) return;
+    input.value = "";
+    autosize();
+    ask(text);
+  }
+
+  form.addEventListener("submit", function (e) { e.preventDefault(); submit(); });
+  input.addEventListener("input", autosize);
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey && !coarse) { e.preventDefault(); submit(); }
+  });
+
+  resetBtn.addEventListener("click", function () {
+    if (pending) return;
+    history = [];
+    var nodes = stream.querySelectorAll(".msg");
+    for (var i = 0; i < nodes.length; i++) nodes[i].remove();
+    if (intro) intro.hidden = false;
+    input.value = "";
+    autosize();
+    if (!coarse) input.focus();
+  });
+
+  STARTERS.forEach(function (text) {
+    var btn = el("button", "chip", text);
+    btn.type = "button";
+    btn.addEventListener("click", function () { ask(text); });
+    chips.appendChild(btn);
+  });
+
+  /* ---------- 状态自检 ---------- */
+
+  fetch("/health").then(function (r) { return r.json(); }).then(function (h) {
+    if (h.degraded) {
+      statusEl.textContent = "降级模式";
+      statusEl.className = "status degraded";
+      banner.textContent = "服务器没有配置任何模型 API Key，系统处于降级模式："
+        + "报警症状筛查与资料检索正常工作，但不会生成回答。";
+      banner.hidden = false;
+    } else {
+      statusEl.textContent = "证据库 " + h.chunks + " 段";
+      statusEl.className = "status ready";
+      statusEl.title = "作答模型 " + h.provider + "；实时检索" + (h.live ? "可用" : "不可用");
+    }
+  }).catch(function () {
+    statusEl.textContent = "未连接";
+    statusEl.className = "status degraded";
+  });
+
+  if (!coarse) input.focus();
+  autosize();
+})();
+</script>
+</body>
+</html>

@@ -22,6 +22,13 @@ from pathlib import Path
 ANTHROPIC_MODEL = "claude-opus-5"
 OPENAI_MODEL = "gpt-5.1"
 PERPLEXITY_MODEL = "sonar-pro"
+OLLAMA_MODEL = os.environ.get("MINGTU_LLM_MODEL", "qwen3:14b")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+# 默认全本地。用户的健康问题不出本机，规避《个人信息保护法》下的数据出境问题。
+# 需要调用云端模型时显式设置 MINGTU_LOCAL_ONLY=0。
+def local_only():
+    return os.environ.get("MINGTU_LOCAL_ONLY", "1").strip() not in ("0", "false", "no")
 
 KEY_ENVS = [
     Path.home() / "Desktop/dev/curio/.env",
@@ -71,8 +78,34 @@ def _openai():
     return _clients["openai"]
 
 
+def ollama_up():
+    """True when the local runtime is serving the configured chat model."""
+    try:
+        proc = subprocess.run(
+            ["curl", "-sS", "--max-time", "3", f"{OLLAMA_HOST}/api/tags"],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            return False
+        names = [m.get("name", "") for m in json.loads(proc.stdout).get("models", [])]
+        base = OLLAMA_MODEL.split(":")[0]
+        return any(n.split(":")[0] == base for n in names)
+    except Exception:
+        return False
+
+
 def active_provider():
-    """Which provider will answer, or None when nothing is configured."""
+    """Which provider will answer, or None when nothing is configured.
+
+    Local first, always. In local-only mode (the default) there is no fallback
+    to a cloud provider — a missing local model is an error the operator must
+    see, not something to silently paper over by shipping user health questions
+    to a US API.
+    """
+    if ollama_up():
+        return "ollama"
+    if local_only():
+        return None
     if _anthropic() is not None:
         return "anthropic"
     if _openai() is not None:
@@ -84,10 +117,38 @@ def active_provider():
 
 def provider_label():
     return {
+        "ollama": f"本地 {OLLAMA_MODEL}",
         "anthropic": f"Anthropic {ANTHROPIC_MODEL}",
         "openai": f"OpenAI {OPENAI_MODEL}",
         "perplexity": f"Perplexity {PERPLEXITY_MODEL}",
     }.get(active_provider(), "未配置")
+
+
+def _ollama_chat(system, messages, max_tokens, fmt=None):
+    payload = {
+        "model": OLLAMA_MODEL,
+        "stream": False,
+        "options": {"temperature": 0.2, "num_predict": max_tokens},
+        "messages": [{"role": "system", "content": system}] + _fold_system_into_user(messages),
+    }
+    if fmt:
+        payload["format"] = fmt
+    try:
+        proc = subprocess.run(
+            ["curl", "-sS", "--max-time", "600", "-X", "POST",
+             f"{OLLAMA_HOST}/api/chat", "-H", "content-type: application/json",
+             "--data-binary", "@-"],
+            input=json.dumps(payload, ensure_ascii=False),
+            capture_output=True, text=True,
+        )
+        data = json.loads(proc.stdout)
+    except Exception:
+        return None
+    content = (data.get("message") or {}).get("content")
+    if not content:
+        return None
+    # qwen3 emits reasoning in <think> blocks; strip before the user sees it.
+    return re.sub(r"<think>.*?</think>\s*", "", content, flags=re.S).strip()
 
 
 def available():

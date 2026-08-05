@@ -123,7 +123,7 @@ GRADE_LABEL = {
 }
 
 ERROR_NOTE = {
-    "no_anthropic_key": "未配置 ANTHROPIC_API_KEY，本轮只跑了检索与安全层，没有生成回答。",
+    "no_model_key": "没有配置任何模型 API Key，本轮只跑了检索与安全层，没有生成回答。",
     "generation_failed": "本轮生成失败，可能是网络或接口异常。可以直接再问一次。",
     "validation_failed": "本轮回答没通过引用校验或合规校验，已按规则弃答，不会把不合格的内容发给你。",
 }
@@ -157,7 +157,9 @@ def clean_url(url):
 def strip_citations(answer):
     """存进历史前去掉引用编号：编号只对生成它的那一轮有效，
     留在上文里会诱导模型在下一轮复用不存在的编号。"""
-    return re.sub(r"\s{2,}", " ", _CITATION.sub("", answer)).strip()
+    text = _CITATION.sub("", answer)
+    text = re.sub(r"[ \t]+([。，、；：！？）】」』])", r"\1", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 # --- 输出 -------------------------------------------------------------------
@@ -200,6 +202,9 @@ def print_status(result):
     ]
     if routing.get("_fallback"):
         parts.append("分流 降级兜底")
+    # 换了作答模型要看得见：提示词是按 claude-opus-5 写的，别让人误以为一直是它在答。
+    if result.get("provider"):
+        parts.append("模型 " + result["provider"])
     print(paint(" · ".join(parts), DIM))
 
 
@@ -298,32 +303,42 @@ def print_turn(result, debug):
 
 # --- 启动检查 ---------------------------------------------------------------
 
+def model_provider():
+    """返回 (provider_id, 展示名)。取不到就降级，不要因为一个提示行崩掉整个入口。"""
+    try:
+        from agent.llm import active_provider, provider_label
+        return active_provider(), provider_label()
+    except Exception:
+        return None, "未知"
+
+
 def check_credentials():
     """把缺 key 的后果讲清楚，而不是等到中途报错。"""
-    try:
-        from agent.llm import anthropic_key
-        has_anthropic = bool(anthropic_key())
-    except Exception:
-        has_anthropic = False
+    provider, label = model_provider()
+
+    if provider is None:
+        print(paint("提醒：没有配置任何模型 API Key，这一轮不会生成回答。", YELLOW, BOLD))
+        print(paint("      安全层和检索仍然工作：报警症状照常触发就医提示，也能看到检索到哪些资料。", DIM))
+        print(paint("      配置方式：export ANTHROPIC_API_KEY=sk-ant-...", DIM))
+        print(paint("      或写进项目根目录的 .env，键名 ANTHROPIC_API_KEY。", DIM))
+        print(paint("      也接受 OPENAI_API_KEY 或 PERPLEXITY_API_KEY 作为备选。", DIM))
+        print()
+    elif provider != "anthropic":
+        print(paint(f"提醒：没有找到 ANTHROPIC_API_KEY，本次由 {label} 作答。", YELLOW, BOLD))
+        print(paint("      提示词、证据分级和引用规则都是按 claude-opus-5 写的，", DIM))
+        print(paint("      换模型后措辞、引用密度和弃答判断都可能有出入，正式上线前请核对。", DIM))
+        print(paint("      配置方式：export ANTHROPIC_API_KEY=sk-ant-...，或写进项目根目录的 .env。", DIM))
+        print()
+    else:
+        print(paint(f"作答模型：{label}", DIM))
 
     try:
         from agent.index import openai_key
         openai_key()
-        has_openai = True
     except BaseException:
-        has_openai = False
-
-    if not has_anthropic:
-        print(paint("提醒：没有找到 ANTHROPIC_API_KEY，这一轮不会生成回答。", YELLOW, BOLD))
-        print(paint("      安全层和检索仍然工作：报警症状照常触发就医提示，也能看到检索到哪些资料。", DIM))
-        print(paint("      配置方式：export ANTHROPIC_API_KEY=sk-ant-...", DIM))
-        print(paint("      或写进 ~/Desktop/dev/curio/.env，键名 ANTHROPIC_API_KEY。", DIM))
+        print(paint("提醒：没有找到 OPENAI_API_KEY，查询向量化无法工作，提问会直接失败。", YELLOW, BOLD))
+        print(paint("      配置方式：export OPENAI_API_KEY=sk-...", DIM))
         print()
-    if not has_openai:
-        print(paint("提醒：没有找到 OPENAI_API_KEY，向量检索无法工作，提问会直接失败。", YELLOW, BOLD))
-        print(paint("      配置方式：export OPENAI_API_KEY=sk-...（用于查询向量化）", DIM))
-        print()
-    return has_anthropic, has_openai
 
 
 def load_agent():
