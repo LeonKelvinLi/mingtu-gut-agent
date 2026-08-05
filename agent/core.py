@@ -125,7 +125,10 @@ class Agent:
 
         # 2) 缓存。只对首轮提问生效：追问依赖上文，同样的字面问题在不同上下文里
         #    答案并不相同，用缓存回答追问会答非所问。
-        cacheable = bool(self.cache) and (not history) and (not flags)
+        # 必须写成 is not None：AnswerCache 定义了 __len__，所以 bool(空缓存) 为 False。
+        # 写成 bool(self.cache) 的后果是：缓存一旦被清空（例如语料更新导致整体失效），
+        # 就再也不会写入任何条目，自己把自己锁死在空状态。
+        cacheable = (self.cache is not None) and (not history) and (not flags)
         query_vector = None
         if cacheable:
             hit = self.cache.lookup_literal(query)
@@ -264,7 +267,10 @@ class Agent:
             yield ("done", {"answer": safety.escalation_message(flags), "sources": []})
             return
 
-        cacheable = bool(self.cache) and (not history) and (not flags)
+        # 必须写成 is not None：AnswerCache 定义了 __len__，所以 bool(空缓存) 为 False。
+        # 写成 bool(self.cache) 的后果是：缓存一旦被清空（例如语料更新导致整体失效），
+        # 就再也不会写入任何条目，自己把自己锁死在空状态。
+        cacheable = (self.cache is not None) and (not history) and (not flags)
         query_vector = None
         if cacheable:
             hit = self.cache.lookup_literal(query)
