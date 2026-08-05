@@ -346,10 +346,15 @@ class ChatHandler(BaseHTTPRequestHandler):
             return self._fail(HTTPStatus.BAD_REQUEST, "请先输入内容。")
         history = data.get("history") or []
 
+        # SSE 的长度事先不可知，所以必须显式关闭连接来终止流。
+        # 少了这一步，事件其实都发出去了，但连接一直挂着，
+        # 浏览器的 reader 永远等不到结束——表现成「一直转圈」。
+        self.close_connection = True
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
         self.end_headers()
 
         def emit(kind, payload):
@@ -363,6 +368,10 @@ class ChatHandler(BaseHTTPRequestHandler):
         except Exception:
             emit("done", {"answer": "这一轮没能生成回答，请再问一次。", "sources": []})
         emit("end", {})
+        try:
+            self.wfile.flush()
+        except Exception:
+            pass
 
     def _speak(self):
         """朗读。本地模式下不提供——朗读必然要把内容发到外部服务。"""
