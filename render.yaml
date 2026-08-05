@@ -1,0 +1,30 @@
+# Render 免费方案部署配置
+#
+# 注意：云端部署与「全本地」是两套不同的取舍。
+#   本地（默认）：ollama bge-m3 + qwen3，用户健康信息不出本机，无数据出境问题
+#   云端（本文件）：Gemini 免费额度作答，数据会离开本机，仅适合演示与对外分享
+#
+# Render 免费实例只有 512MB 内存，跑不动本地大模型，因此云端必须用 API 模型。
+# 免费实例在无访问时会休眠，首次唤醒约需 30-60 秒，属于免费方案的正常表现。
+
+services:
+  - type: web
+    name: mingtu-gut-agent
+    runtime: python
+    plan: free
+    region: singapore          # 距离中国大陆最近的区域，延迟最低
+    buildCommand: pip install -r requirements.txt
+    startCommand: python web/server.py --host 0.0.0.0
+    healthCheckPath: /
+    envVars:
+      # 关闭全本地模式，允许调用云端模型
+      - key: MINGTU_LOCAL_ONLY
+        value: "0"
+      # 云端用 Gemini 免费额度：作答与向量都走它，成本为零
+      - key: GEMINI_API_KEY
+        sync: false            # 在 Render 面板里填，不进版本库
+      # 实时补充检索。留空则云端只用已建好的知识库，不做联网检索
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.13"

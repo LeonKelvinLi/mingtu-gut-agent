@@ -148,9 +148,6 @@ FAMILY_HISTORY_MISSES = [
 
 
 @pytest.mark.parametrize("message", FAMILY_HISTORY_MISSES)
-@known_gap("RED_FLAGS 家族史 pattern is disease-first (肠癌…家族史) only, "
-           "but Chinese states the relative first (我爸得过肠癌) — needs the "
-           "mirrored alternative (亲属词).{0,14}(癌|息肉|克罗恩|溃疡性结肠炎)")
 def test_family_history_relative_first(message):
     flags, _ = safety.screen_input(message)
     assert "消化道疾病家族史" in flags
@@ -166,18 +163,12 @@ WEIGHT_LOSS_MISSES = [
 
 
 @pytest.mark.parametrize("message", WEIGHT_LOSS_MISSES)
-@known_gap("RED_FLAGS 体重下降 anchors 掉了/轻了 to (体重|人|我) appearing FIRST, "
-           "so the common 时间段+掉了N斤 form never matches — needs "
-           "(掉|轻|少)了\\s*\\d+\\s*(斤|公斤|kg) on its own")
 def test_weight_loss_without_subject_anchor(message):
     flags, _ = safety.screen_input(message)
     assert "体重下降" in flags
 
 
 @pytest.mark.parametrize("message", ["夜里拉肚子", "夜里总是腹泻"])
-@known_gap("RED_FLAGS 夜间症状 alternation lists 夜间/半夜/晚上/睡着 but not 夜里, "
-           "which is the colloquial form; prompt.py SAFETY_RULES lists 夜间腹泻 "
-           "as a referral trigger")
 def test_night_symptom_colloquial_form(message):
     flags, _ = safety.screen_input(message)
     assert "夜间症状" in flags
@@ -314,9 +305,6 @@ def test_compliant_phrasing_passes(text):
     "没有任何产品可以根治肠易激。",
     "益生菌不替代药物，也不替代就医。",
 ])
-@known_gap("_NEGATED misses bare 不X / 没有X, so a correct compliance statement "
-           "trips the output gate and burns a repair round; after 2 rounds the "
-           "user gets the canned failure text instead of a right answer")
 def test_bare_negation_should_not_be_a_violation(text):
     assert safety.screen_output(text) == []
 

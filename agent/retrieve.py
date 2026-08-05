@@ -199,7 +199,8 @@ def infer_filters(query):
     """
     filters = {}
     populations = []
-    if re.search(r"婴儿|新生儿|宝宝|奶粉|早产", query):
+    # 「婴幼儿」是法规原文用词（可用于婴幼儿食品的菌种名单），必须匹配字面形式。
+    if re.search(r"婴幼儿|婴儿|新生儿|宝宝|奶粉|早产|辅食", query):
         populations.append("婴幼儿")
     if re.search(r"孩子|儿童|小孩|小儿|青少年", query):
         populations.append("儿童")
@@ -207,7 +208,8 @@ def infer_filters(query):
         populations.append("孕产妇")
     if re.search(r"老人|老年|高龄", query):
         populations.append("老年")
-    if re.search(r"化疗|免疫抑制|移植|白细胞低", query):
+    # 益生菌菌血症风险最高的人群，恰恰用最口语的说法描述自己（免疫力低下、抵抗力差）。
+    if re.search(r"化疗|免疫抑制|移植|白细胞低|免疫力低|免疫力差|抵抗力差|抵抗力低", query):
         populations.append("免疫抑制")
     if populations:
         filters["population"] = populations

@@ -105,26 +105,46 @@ fi
 # 各模块的 key 查找路径本来就不完全一致（llm.py 认项目 .env，index.py 不认，
 # research.py 连环境变量都不看），自己判断一定会出现这里说「有」、
 # 用户提问时说「没有」。
+# 输出写成 名字=值 的形式再按前缀取，不按行号取。Python 那边的报错会混进
+# 同一个流里，按行号读会把 Traceback 的第一行当成某个字段的值 —— 那种错误
+# 比没有检查更糟，因为它看起来像是检查通过了。
 status="$("$PY" - <<'PY' 2>&1 || true
 import sys
 sys.path.insert(0, ".")
 
-from agent import embed, llm
-from tools.research import key as perplexity_key
+def field(name, fn):
+    try:
+        print("%s=%s" % (name, fn()))
+    except BaseException as exc:
+        print("%s=ERR:%s: %s" % (name, type(exc).__name__, exc))
 
-print(embed.backend_id())                       # 向量后端，没有时是 none
-print(llm.provider_label())                     # 作答模型，没有时是「未配置」
-print("yes" if perplexity_key() else "no")      # 实时补充检索（可选）
-print("yes" if embed.local_only() else "no")    # 是否禁止出网向量调用
+try:
+    from agent import embed, llm
+    from tools.research import key as perplexity_key
+except BaseException as exc:
+    print("import=ERR:%s: %s" % (type(exc).__name__, exc))
+    sys.exit(0)
+
+field("backend", embed.backend_id)                             # 没有时是 none
+field("provider", llm.provider_label)                          # 没有时是「未配置」
+field("perplexity", lambda: "yes" if perplexity_key() else "no")
+field("localonly", lambda: "yes" if embed.local_only() else "no")
 PY
 )"
-backend=""; provider=""; perplexity_state=""; local_only=""
-{ read -r backend; read -r provider; read -r perplexity_state; read -r local_only; } <<< "$status" || true
-if [ -z "$backend" ] || [ -z "$provider" ] || [ -z "$local_only" ]; then
-  err "读不出向量后端与模型配置，agent/embed.py 或 agent/llm.py 的接口可能变了："
-  printf '%s\n' "$status" >&2
-  exit 1
-fi
+pick() { printf '%s\n' "$status" | grep -m1 "^$1=" | cut -d= -f2- || true; }
+backend="$(pick backend)"
+provider="$(pick provider)"
+perplexity_state="$(pick perplexity)"
+local_only="$(pick localonly)"
+
+for pair in "向量后端:$backend" "作答模型:$provider" "实时检索:$perplexity_state" "本地限定:$local_only"; do
+  label="${pair%%:*}"; got="${pair#*:}"
+  if [ -z "$got" ] || [[ "$got" == ERR:* ]]; then
+    err "读不出「${label}」的状态，agent/embed.py 或 agent/llm.py 的接口可能变了："
+    printf '%s\n' "$status" >&2
+    exit 1
+  fi
+done
 
 if [ "$backend" = "none" ]; then
   err "没有可用的向量后端，检索起不来"

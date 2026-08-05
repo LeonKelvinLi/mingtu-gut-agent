@@ -76,10 +76,11 @@ button,textarea{font:inherit;color:inherit}
   position:sticky;top:0;z-index:5;
 }
 .brand{display:flex;align-items:center;gap:11px;min-width:0}
+.brand>div{min-width:0}
 .mark{width:32px;height:32px;border-radius:9px;background:var(--accent);flex:none;position:relative}
 .mark::before{content:"";position:absolute;left:8px;right:8px;bottom:9px;height:9px;border:2.4px solid #fff;border-bottom:0;border-radius:9px 9px 0 0}
 .mark::after{content:"";position:absolute;left:13.5px;top:7px;width:5px;height:5px;border-radius:50%;background:#fff}
-.brand h1{margin:0;font-size:16px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.brand h1{margin:0;font-size:16px;font-weight:600;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tagline{margin:1px 0 0;font-size:12.5px;line-height:1.4;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top-right{display:flex;align-items:center;gap:10px;flex:none}
 .status{
@@ -248,6 +249,10 @@ details.detail[open]>summary::before{content:"−"}
   .composer{padding:10px 14px 12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .kv dt{width:60px}
   .banner{padding:10px 14px}
+}
+/* 窄屏优先保住标题：状态徽标是锦上添花，降级时横幅会把话说清楚 */
+@media (max-width:420px){
+  .status{display:none}
 }
 </style>
 </head>

@@ -23,7 +23,14 @@ TARGET_CHARS = 450
 OVERLAP_CHARS = 90
 MIN_CHARS = 120
 
-_GRADE = re.compile(r"证据等级[：:\s]*([A-E])|[（(]([A-E])\s*级[）)]|\b([A-E])级证据")
+# 第三个分支不能用 \b：\b 只在「词character」边界成立，而中文字符与拉丁字母之间
+# 不构成 \b 边界，所以语料里最常见的「可归入 A 级证据」整类全部漏掉。
+# 同时 级 前面要允许空格。修好后语料的已分级块从 369 涨到 484。
+_GRADE = re.compile(
+    r"证据等级(?:为|是|可评为)?[：:\s]*([A-E])(?![A-Za-z])"
+    r"|[（(]([A-E])\s*级[）)]"
+    r"|([A-E])\s*级证据"
+)
 _YEAR = re.compile(r"(19[89]\d|20[0-3]\d)\s*年?")
 _URL = re.compile(r"https?://[^\s）)、，,；;】\]]+")
 
@@ -48,7 +55,10 @@ _AUTHORITY = [
 
 _REGULATORY = re.compile(
     r"广告法|食品安全法|卫健委|国家卫生健康委|市场监管总局|"
-    r"保健食品|可用于食品的菌种名单|团体标准|国标|GB\s?\d|法规|文号"
+    # 婴幼儿名单是另一份文件，名字里多了「婴幼儿」三个字，写死字面量会把它整份漏掉。
+    # 漏掉的正是家长问「宝宝能吃哪些菌」时配额最需要保住的那些段落。
+    r"保健食品|可用于(婴幼儿)?食品的菌种名单|婴幼儿配方.{0,6}菌种|"
+    r"团体标准|国标|GB\s?\d|法规|文号"
 )
 
 
@@ -133,7 +143,10 @@ def chunk_document(text, source):
                 continue
             # The heading rides with the text so retrieval sees the topic.
             full = f"【{heading}】\n{piece}"
-            meta = extract_metadata(piece, source, heading)
+            # Metadata is read from the heading too: the corpus routinely puts
+            # the grade in the section title (「…荟萃分析（A级证据）」), and
+            # extracting from the body alone left those chunks ungraded.
+            meta = extract_metadata(full, source, heading)
             meta["text"] = full
             meta["id"] = hashlib.sha1(
                 f"{source}:{full}".encode("utf-8")

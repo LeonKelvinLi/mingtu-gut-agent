@@ -23,10 +23,17 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_EMBED_MODEL = os.environ.get("MINGTU_EMBED_MODEL", "bge-m3")
 OPENAI_EMBED_MODEL = "text-embedding-3-large"
 
-# Set MINGTU_LOCAL_ONLY=1 to forbid any outbound API call. Intended for
-# on-premise deployment where data must not leave the network.
 def local_only():
-    return os.environ.get("MINGTU_LOCAL_ONLY", "").strip() in ("1", "true", "yes")
+    """Single source of truth, imported from llm.py.
+
+    These two modules previously carried their own copies with opposite
+    defaults — llm.py defaulted to local-only, embed.py defaulted to allowing
+    cloud. That is the worst possible split: a deployment believing it was
+    airtight would still ship every user question to a cloud embedding API,
+    and nothing in the logs would say so.
+    """
+    from agent.llm import local_only as _local_only
+    return _local_only()
 
 
 def ollama_up():

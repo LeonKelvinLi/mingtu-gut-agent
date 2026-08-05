@@ -39,12 +39,6 @@ def test_evidence_grade_forms(text, expected):
     ("属于典型 E 级证据，不适合作为结论", "E"),
     ("该结论为C级证据", "C"),            # no space, but preceded by a Chinese char
 ])
-@known_gap(
-    "_GRADE's third alternative is r'\\b([A-E])级证据': \\b never matches between "
-    "a CJK char and a letter, and there is no \\s* before 级, so the corpus form "
-    "'可归入 A 级证据' is missed. 98 of the 443 built chunks carry a visible "
-    "'X 级证据' marker and still have evidence_grade=None. Fix: "
-    "r'([A-E])\\s*级证据' (drop \\b, add \\s*) — recovers 171 -> 274 graded chunks")
 def test_evidence_grade_spaced_and_inline_forms(text, expected):
     assert meta(text)["evidence_grade"] == expected
 
@@ -132,13 +126,6 @@ def test_regulatory_detection(text):
     "可用于婴幼儿食品的菌种名单",
     "婴幼儿配方乳粉中允许添加的菌株见可用于婴幼儿食品的菌种名单",
 ])
-@known_gap(
-    "_REGULATORY matches the literal '可用于食品的菌种名单', which the infant list's "
-    "own name ('可用于婴幼儿食品的菌种名单') does not contain. 4 of the 17 built "
-    "chunks quoting that list are unflagged, including 3.2 名单中典型婴幼儿益生菌菌株 "
-    "— the strains approved for infant formula, i.e. the passage a parent's "
-    "regulatory question most needs the quota to reserve. "
-    "Fix: 可用于(婴幼儿)?食品的菌种名单")
 def test_infant_strain_list_is_regulatory(text):
     assert meta(text)["is_regulatory"] is True
 
@@ -244,8 +231,6 @@ def test_regulatory_corpus_is_actually_marked():
 
 
 @pytest.mark.skipif(not RESEARCH_READY, reason="research/*.md not present")
-@known_gap("same _GRADE defect as above, measured on the real corpus: chunks "
-           "whose text plainly says 'X 级证据' still come back ungraded")
 def test_no_chunk_with_a_visible_grade_marker_is_left_ungraded():
     marker = re.compile(r"([A-E])\s*级证据")
     missed = []

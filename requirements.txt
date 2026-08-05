@@ -36,8 +36,12 @@ typing-inspection==0.4.2
 
 # ---- 开发依赖 ----------------------------------------------------------------
 # tests/ 用 pytest。这里跟着一起装：多几 MB，换来「照着 README 装完就能跑测试」，
-# 值得。纯部署环境想省掉它，就把这一行删了单独维护一份部署清单。
+# 值得。纯部署环境想省掉它，就把这四行连同 pytest 一起删掉。
 pytest==9.1.1
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.20.0
 
 # 说明一：Perplexity 实时检索（agent/live.py, tools/research.py）和本地 ollama
 # 向量后端（agent/embed.py）走的都是 curl 子进程，不引入 SDK，所以这里没有对应

@@ -58,17 +58,10 @@ def test_plain_question_gets_no_filters():
 
 
 @pytest.mark.parametrize("query", ["婴幼儿可以吃哪些菌种", "婴幼儿食品菌种名单里有什么"])
-@known_gap("infer_filters' 婴幼儿 pattern lists 婴儿|新生儿|宝宝|奶粉|早产 but not the "
-           "literal word 婴幼儿 — which is the term the regulation itself uses "
-           "(可用于婴幼儿食品的菌种名单). This is the classifier's fallback path, so "
-           "it matters exactly when the LLM stage is already down")
 def test_literal_infant_term_is_inferred(query):
     assert "婴幼儿" in infer_filters(query).get("population", [])
 
 
-@known_gap("infer_filters' 免疫抑制 pattern misses the lay phrasing 免疫力低下 / "
-           "抵抗力差, which is how a user describes the highest-risk group for "
-           "probiotic sepsis")
 @pytest.mark.parametrize("query", ["免疫力低下的人能吃益生菌吗", "抵抗力差可以补充吗"])
 def test_lay_immunocompromised_phrasing_is_inferred(query):
     assert "免疫抑制" in infer_filters(query).get("population", [])

@@ -4,7 +4,7 @@
 
 这份文档写给接手这套代码的工程团队。读完你应该知道每个模块负责什么、为什么这么切分、哪些地方是刻意不优雅的，以及现在还差什么。部署和运维看 [DEPLOY.md](DEPLOY.md)。
 
-> **快照说明**：本文档对应 2026-08-04 23:24 的工作区状态（`git log` 最新提交 `4002a68`，另有未提交改动）。作答 provider 层和向量后端当时正在改造中，第 8 节标注了当时的实际状态。读到本文档时如果 `agent/llm.py`、`agent/embed.py`、`agent/index.py` 的 mtime 晚于上述时间，以代码为准。架构、安全层、检索层的描述是稳定的。
+> **快照说明**：本文档对应 2026-08-04 23:31 的工作区状态（`git log` 最新提交 `4002a68`，另有未提交改动）。作答 provider 层（`agent/llm.py`）当时仍在改造中，第 8 节记录的是那一刻逐条复核过的状态。读到本文档时如果 `agent/llm.py`、`agent/embed.py`、`agent/index.py` 的 mtime 晚于上述时间，以代码为准。架构、安全层、检索层、证据分级的描述是稳定的。
 
 ---
 
@@ -120,8 +120,8 @@
 | `safety.py` | 三道确定性闸门：输入报警症状筛查、输出违规宣称筛查、急症固定话术。全是正则和字符串，没有模型调用。 |
 | `prompt.py` | 中文系统提示词，按段落拼装：人设、定位边界、证据分级、引用规则、合规红线、就医边界、文风。另含本轮资料块的渲染。 |
 | `chunker.py` | 把 `research/*.md` 按 Markdown 标题切段，超长段落再按段落/句号切，带 90 字重叠。每块抽取元数据：证据等级、人群、年份、权威性、是否法规、URL。 |
-| `embed.py` | 可插拔向量后端：本地 Ollama `bge-m3`（1024 维）优先，其次 OpenAI `text-embedding-3-large`（3072 维）。`backend_id()` 用于把「索引是谁建的」记进 manifest。 |
-| `index.py` | 构建索引。jieba 分词（`cut_for_search`）+ 菌株号正则保留，向量化交给 `embed.py`。向量按后端分文件存（`vectors-<backend>.npy`），`load_index` 在后端不匹配时直接报错而不是返回垃圾。 |
+| `embed.py` | 可插拔向量后端：本地 Ollama `bge-m3`（1024 维）优先，其次 OpenAI `text-embedding-3-large`（3072 维）。`backend_id()` 给出后端标识，索引文件名靠它区分。 |
+| `index.py` | 构建索引。jieba 分词（`cut_for_search`）+ 菌株号正则保留，向量化交给 `embed.py`。向量按后端分文件存（`vectors-<backend>.npy`），当前后端没有对应索引时 `load_index` 直接报错而不是返回垃圾。 |
 | `retrieve.py` | 混合检索。BM25 与向量各取 30 条，RRF 融合，元数据加权，配额选取，近重复抑制。另含 `infer_filters`——不依赖模型的确定性过滤条件推断。 |
 | `live.py` | Perplexity 实时补充检索。判断是否需要、发请求、把结果整形成与本地块一样的结构并标 `is_live`。 |
 | `classify.py` | 阶段 1 分流与阶段 4 重排。两个都是 LLM 阶段，两个都有确定性兜底。分流部分执行「只升不降」的合并规则。 |
@@ -219,9 +219,7 @@ score(d) = Σ  1 / (60 + rank_i(d))          再 ×100，便于和元数据加�
 
 除 A–E 外，每块还带一个正交的 `authority` 字段（`meta-analysis` > `guideline` > `rct` > `cohort` > `animal` > `opinion`），由关键词抽取、最先命中者胜出，只参与检索加权，不直接展示给用户。
 
-**语料规模**：`research/` 下 9 篇研究文档，重建索引后 **762 块**，其中带证据等级 369 块（48%）、法规块 102 块。
-
-> 注意：仓库里 `knowledge/chunks.jsonl` 当前仍是早期 5 篇文档的 443 块产物，且对应的向量文件已随向量后端切换失效。见第 8 节。
+**语料规模**（当前索引，本地 `bge-m3` 后端）：`research/` 下 9 篇研究文档，切成 **762 块**，向量 762×1024。其中带证据等级 369 块（48%）、法规块 102 块、带 URL 引用 25 块。
 
 ---
 
@@ -308,16 +306,7 @@ mingtu/
 
 ### 8.1 阻塞项
 
-**（1）索引当前不可用，必须重建。** 向量后端已从 OpenAI 切到本地 Ollama `bge-m3`，向量文件改为按后端分文件存（`vectors-<backend>.npy`）。`knowledge/` 下现在只剩一个早期的 `chunks.jsonl`（443 块，5 篇文档），没有任何可用的向量文件。`load_index()` 会直接报错：
-
-```
-当前向量后端 ollama:bge-m3 还没有建过索引。
-请运行： python -m agent.index build
-```
-
-重建后是 762 块（9 篇文档）。重建前后 chunk 数变化很大，任何基于 443 这个数字的判断都要重新校准。
-
-**（2）当前没有任何可用的作答 provider。** `llm.active_provider()` 返回 `None`：
+**（1）当前没有任何可用的作答 provider。** `llm.active_provider()` 返回 `None`：
 
 - 本地 Ollama 的 **chat** 模型（默认 `qwen3:14b`）没有拉下来，`llm.ollama_up()` 为 False
 - `llm.local_only()` 默认为 True（`MINGTU_LOCAL_ONLY` 未设置即视为开启），所以**不会回退到云端**
@@ -325,35 +314,22 @@ mingtu/
 
 结果是检索层和安全层正常，但不生成回答。两条路二选一：`ollama pull qwen3:14b`，或显式 `export MINGTU_LOCAL_ONLY=0` 并配置云端 key。见 DEPLOY.md 第 3 节。
 
-**（3）`local_only()` 在两个模块里语义相反。**
+**（2）`local_only()` 在两个模块里语义相反。**
 
 | 位置 | 默认值 | 行为 |
 |---|---|---|
 | `llm.local_only()` | `"1"` → **True** | 未设置即禁止云端作答 |
 | `embed.local_only()` | `""` → **False** | 未设置即允许云端向量化 |
 
-同一个环境变量 `MINGTU_LOCAL_ONLY`，同一个函数名，默认极性相反。当前实际后果就是一个自相矛盾的状态：**作答层拒绝把数据发往云端，向量层却会在本地后端不可用时把用户提问发给 OpenAI。** 如果本地优先的理由是数据出境合规（4.3 节），这个缺口必须堵上——两处应该统一到同一个判定函数。
+同一个环境变量 `MINGTU_LOCAL_ONLY`，同一个函数名，默认极性相反。`.env.example` 里写的「默认关闭」只对向量层成立。实际后果是一个自相矛盾的状态：**作答层拒绝把数据发往云端，向量层却会在本地后端不可用时把用户提问发给 OpenAI。** 如果本地优先的理由是数据出境合规（4.3 节），这个缺口必须堵上——两处应该统一到同一个判定函数。
 
-**（4）检索层的查询向量化没有跟着换后端。** `retrieve.py:_embed_query` 仍然硬编码 OpenAI：
-
-```python
-from openai import OpenAI
-self._client = OpenAI(api_key=openai_key())
-resp = self._client.embeddings.create(model=EMBED_MODEL, input=[query])
-```
-
-它绕过了 `embed.py`。后果有两层：
-
-- **维度不匹配**：索引若用 `bge-m3`（1024 维）建，查询向量却是 3072 维，`self.vectors @ v` 直接崩。`load_index` 的 manifest 检查拦不住这个——manifest 记录的是索引用了哪个后端，查询走的是另一条完全不受检查的路径。
-- **合规缺口**：即使全本地建索引，每一次用户提问仍然会被发到 OpenAI。
-
-修法是让 `_embed_query` 调 `embed.embed([query])`。这条必须和（3）一起修。
+> 撰写本文档期间修掉的两项，留档备查：索引已按新的按后端分文件方案重建（762 块 / 1024 维 / `ollama:bge-m3`）；`retrieve.py:_embed_query` 原本硬编码调 OpenAI、绕过 `embed.py`，会在本地索引上产生 3072 维查询向量对 1024 维索引的维度崩溃和「全本地建索引但每次提问仍出网」的合规缺口，现已改为走 `agent.embed`。
 
 ### 8.2 数据与语料
 
-- **语料自带的 `[N]` 标记与本系统的引用编号冲突。** `research/*.md` 是 Perplexity 生成的，正文里带着它自己的引用标记 `[1][2][3]`，原样进了索引（早期 443 块的版本里，365 块含 `[N]`，其中 217 块含 1–8 范围内的编号，正好和本轮资料编号区间重叠）。模型可能照抄段落里的 `[13]`，被判成编造编号触发无谓重写；更糟的是照抄 `[3]`，落在合法区间内，校验通过但指向完全不相干的来源，且无法被发现。修法是在 `chunker.py` 里剥掉源文档自带的标记，或把本系统的引用格式改成不会撞车的形式。
-- **约一半的块没有证据等级。** 重建后 369/762 带等级（48%，比早期 39% 有改善）。没等级的块 `GRADE_BOOST` 为 0，模型看到的标签是「未标注等级」，没法向用户传达可信度。原因是 `chunker._GRADE` 只认三种写法（`证据等级：A`、`（A级）`、`A级证据`）。
-- **URL 抽取覆盖率低。** `_URL` 逐块跑，而 Perplexity 把参考文献集中放在文档末尾，绝大多数正文块里没有链接。结果是来源清单大部分条目没有可点验证的出处。
+- **语料自带的 `[N]` 标记与本系统的引用编号冲突（当前最该先修的一条）。** `research/*.md` 是 Perplexity 生成的，正文里带着它自己的引用标记 `[1][2][3]`，原样进了索引：**762 块里 660 块含 `[N]`，其中 412 块含 1–8 范围内的编号**，正好和本轮资料编号区间重叠。模型可能照抄段落里的 `[13]`，被判成编造编号触发无谓重写；更糟的是照抄 `[3]`，落在合法区间内，校验通过但指向完全不相干的来源，且无法被发现——这直接冲击设计约束第 3 条。修法是在 `chunker.py` 里剥掉源文档自带的标记，或把本系统的引用格式改成不会撞车的形式（如 `【S3】`）。改完要重建索引。
+- **约一半的块没有证据等级。** 369/762 带等级（48%）。没等级的块 `GRADE_BOOST` 为 0，模型看到的标签是「未标注等级」，没法向用户传达可信度。原因是 `chunker._GRADE` 只认三种写法（`证据等级：A`、`（A级）`、`A级证据`）。
+- **URL 抽取覆盖率低：25/762。** `_URL` 逐块跑，而 Perplexity 把参考文献集中放在文档末尾，绝大多数正文块里没有链接。结果是来源清单大部分条目没有可点验证的出处，只能回落到「research/xx.md」这种文件级指向。
 - **年份抽取有噪声。** `_YEAR` 匹配文中任意 4 位年份并取最大值，包括文献列表里提到的年份，不一定是这段结论本身的年份。
 - **单一数据源。** 全部块来自同一批 Perplexity `sonar-deep-research` 输出，没有第二来源交叉校验，也没有人工审核记录。
 
@@ -369,11 +345,10 @@ resp = self._client.embeddings.create(model=EMBED_MODEL, input=[query])
 ### 8.4 工程与可观测性
 
 - **异常被静默吞掉。** `llm.py` 的每个 provider 分支都是 `except Exception: return None`，认证失败、限流、超时、拒答、参数错误在外部完全不可区分。这是当前最大的可观测性缺口。网页服务会把堆栈打进服务端日志，CLI 会打异常类型和消息，但模型层内部的失败原因拿不到。
-- **一个测试失败。** `tests/test_chunker.py::test_regulatory_detection[可用于婴幼儿食品的菌种名单]`——`chunker._REGULATORY` 收了「可用于食品的菌种名单」但没收婴幼儿那一版。当前 156 passed / 1 failed / 18 xfailed。
+- **测试只覆盖 `safety.py` 和 `chunker.py`。** 当前 228 passed / 3 skipped / 24 xfailed，全绿。但「只升不降」的合并规则、引用校验、重写循环、provider 选择、检索加权都没有测试——这几处才是最该补的地方。
 - **`pytest` 不在 `requirements.txt` 里**，只存在于 `.venv`。
-- **测试只覆盖 `safety.py` 和 `chunker.py`。** 「只升不降」的合并规则、引用校验、重写循环、provider 选择都没有测试。
 - **`tools/research.py` 的 `key()` 不读环境变量也不读项目 `.env`**，只读 `~/Desktop/dev` 下的共享 `.env`。所以把 `PERPLEXITY_API_KEY` 填进项目 `.env`，实时检索这一路拿不到（作答回退那一路能拿到，走的是 `llm._read_key`）。`.env.example` 里已记录这个问题。
-- **`index.py` 里的 `openai_key()` 和 `EMBED_MODEL` 已是历史残留**，只有 `retrieve.py` 还在用（见 8.1 第 4 条）。
+- **`index.py` 里的 `openai_key()` 和 `EMBED_MODEL` 是历史残留。** 检索层已改走 `embed.py`，现在唯一的调用点是 `cli.py` 的启动检查——它据此提示「没有 OPENAI_API_KEY，查询向量化无法工作」，但在本地 `bge-m3` 后端下这句提示是错的（本地后端根本不需要这个 key）。这条提示要跟着改成问 `embed.active_backend()`。
 - **索引重建是全量的**，加一篇研究文档也要重跑全部 762 块。
 - **没有速率限制（网页层只有 3 并发的信号量）、没有会话持久化、没有成本追踪。**
 

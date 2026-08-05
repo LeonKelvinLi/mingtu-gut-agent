@@ -24,6 +24,8 @@ OPENAI_MODEL = "gpt-5.1"
 PERPLEXITY_MODEL = "sonar-pro"
 OLLAMA_MODEL = os.environ.get("MINGTU_LLM_MODEL", "qwen3:14b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+GEMINI_MODEL = os.environ.get("MINGTU_GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_FALLBACK = "gemini-2.5-flash"
 
 # 默认全本地。用户的健康问题不出本机，规避《个人信息保护法》下的数据出境问题。
 # 需要调用云端模型时显式设置 MINGTU_LOCAL_ONLY=0。
@@ -108,6 +110,10 @@ def active_provider():
         return None
     if _anthropic() is not None:
         return "anthropic"
+    # Gemini before OpenAI: its free tier is what makes the hosted demo cost
+    # nothing, and on Chinese-language health text its quality is comparable.
+    if _read_key("GEMINI_API_KEY"):
+        return "gemini"
     if _openai() is not None:
         return "openai"
     if _read_key("PERPLEXITY_API_KEY"):
@@ -119,9 +125,53 @@ def provider_label():
     return {
         "ollama": f"本地 {OLLAMA_MODEL}",
         "anthropic": f"Anthropic {ANTHROPIC_MODEL}",
+        "gemini": f"Gemini {GEMINI_MODEL}",
         "openai": f"OpenAI {OPENAI_MODEL}",
         "perplexity": f"Perplexity {PERPLEXITY_MODEL}",
     }.get(active_provider(), "未配置")
+
+
+def _gemini_chat(system, messages, max_tokens, schema=None):
+    """Gemini uses systemInstruction plus role user/model turns."""
+    key = _read_key("GEMINI_API_KEY")
+    if not key:
+        return None
+    contents = []
+    for msg in _fold_system_into_user(messages):
+        contents.append({
+            "role": "model" if msg["role"] == "assistant" else "user",
+            "parts": [{"text": msg["content"]}],
+        })
+    payload = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_tokens},
+    }
+    if schema:
+        payload["generationConfig"]["responseMimeType"] = "application/json"
+
+    # Fall back down the model ladder on rate limits — the free tier throttles
+    # the strongest model first, and a throttled demo looks like a broken one.
+    for model in (GEMINI_MODEL, GEMINI_FALLBACK):
+        try:
+            proc = subprocess.run(
+                ["curl", "-sS", "--max-time", "180", "-X", "POST",
+                 f"https://generativelanguage.googleapis.com/v1beta/models/"
+                 f"{model}:generateContent?key={key}",
+                 "-H", "content-type: application/json", "--data-binary", "@-"],
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True, text=True,
+            )
+            data = json.loads(proc.stdout)
+        except Exception:
+            continue
+        if "candidates" not in data:
+            continue
+        parts = data["candidates"][0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts).strip()
+        if text:
+            return text
+    return None
 
 
 def _ollama_chat(system, messages, max_tokens, fmt=None):
@@ -240,6 +290,30 @@ def call_json(system, user, schema, effort="low", max_tokens=4096):
         except Exception:
             return None
 
+    if provider == "ollama":
+        text = _ollama_chat(system + "\n\n只输出一个 JSON 对象，不要解释、不要代码块标记。",
+                            [{"role": "user", "content": user}], max_tokens, fmt=schema)
+        if not text:
+            return None
+        m = re.search(r"\{.*\}", text, re.S)
+        try:
+            return json.loads(m.group(0)) if m else None
+        except Exception:
+            return None
+
+    if provider == "gemini":
+        text = _gemini_chat(
+            system + "\n\n只输出一个 JSON 对象，不要解释、不要代码块标记。必须符合此 Schema："
+            + json.dumps(schema, ensure_ascii=False),
+            [{"role": "user", "content": user}], max_tokens, schema=schema)
+        if not text:
+            return None
+        m = re.search(r"\{.*\}", text, re.S)
+        try:
+            return json.loads(m.group(0)) if m else None
+        except Exception:
+            return None
+
     if provider == "perplexity":
         instruction = (
             f"{system}\n\n只输出一个 JSON 对象，不要任何解释、不要代码块标记。"
@@ -293,15 +367,13 @@ def generate(system, messages, max_tokens=8000, effort="high"):
         except Exception:
             return None
 
+    if provider == "ollama":
+        return _ollama_chat(system, messages, max_tokens)
+
+    if provider == "gemini":
+        return _gemini_chat(system, messages, max_tokens)
+
     if provider == "perplexity":
         return _perplexity_chat(system, messages, max_tokens)
 
     return None
-
-
-# Kept for callers that only need to know whether answering is possible.
-def client():
-    return active_provider()
-
-
-MODEL = ANTHROPIC_MODEL
