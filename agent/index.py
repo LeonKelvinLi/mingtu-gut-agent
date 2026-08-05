@@ -79,6 +79,10 @@ def tokenize(text):
 def load_chunks():
     chunks = []
     for path in sorted(RESEARCH_DIR.glob("*.md")):
+        # README.md 是这个目录的说明文件，不是研究资料。
+        # 把它切进语料等于让智能体拿目录说明当医学证据回答用户。
+        if path.stem.lower() in ("readme", "index"):
+            continue
         text = path.read_text(encoding="utf-8")
         chunks.extend(chunk_document(text, path.stem))
     return chunks

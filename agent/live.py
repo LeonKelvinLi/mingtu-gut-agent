@@ -60,6 +60,13 @@ def needs_live(query, best_local_score, threshold=2.0):
 
 def search_live(query, model=LIVE_MODEL):
     """Query Perplexity and return chunk-shaped passages. [] on any failure."""
+    # 本地模式必须在这里也失败关闭。llm.py 与 embed.py 都严格失败关闭，
+    # 唯独实时检索曾经完全绕过闸门——用户的健康问题照样被发到美国的 API，
+    # 而产品对客户的承诺是「数据不出本机」。少一个功能可以，承诺不成立不可以。
+    from agent.llm import local_only
+    if local_only():
+        return []
+
     api_key = perplexity_key()
     if not api_key:
         return []

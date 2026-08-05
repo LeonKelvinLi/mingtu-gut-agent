@@ -189,7 +189,9 @@ class Agent:
         answer = ""
         for attempt in range(MAX_REPAIR_ROUNDS + 1):
             answer = self._generate(messages)
-            if answer is None:
+            # 空串与纯空白必须当作失败：它们能通过引用校验（没有引用）
+            # 和合规校验（没有内容），然后作为「成功回答」发给用户。
+            if answer is None or not str(answer).strip():
                 result["answer"] = "抱歉，这一轮没能生成回答，请再问一次。"
                 result["error"] = "generation_failed"
                 return result

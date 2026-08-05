@@ -51,6 +51,12 @@ def ollama_up():
 
 
 def active_backend():
+    # 显式指定后端。没有这个开关时，只要本机 ollama 在跑就一定选本地，
+    # 想单独重建云端索引都做不到——而索引与向量后端一旦错配，
+    # 行数还对得上、维度也对得上，只有答案是错的。
+    forced = os.environ.get("MINGTU_EMBED_BACKEND", "").strip().lower()
+    if forced in ("ollama", "gemini", "openai"):
+        return forced
     if ollama_up():
         return "ollama"
     if local_only():

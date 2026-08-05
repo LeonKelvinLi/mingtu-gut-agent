@@ -95,13 +95,19 @@ class AnswerCache:
 
         self.entries = rows[-MAX_ENTRIES:]
         self._by_key = {r["key"]: i for i, r in enumerate(self.entries)}
+        # 行数对不上就整体放弃：随仓库携带的 jsonl 与 npy 可能来自不同时刻，
+        # 截断对齐（原来的 vecs[-n:]）会让每一条都指向错误的向量。
         if CACHE_VECS.exists() and self.entries:
             try:
                 vecs = np.load(CACHE_VECS)
-                if vecs.shape[0] >= len(self.entries):
-                    self.vectors = vecs[-len(self.entries):]
+                if vecs.shape[0] == len(self.entries):
+                    self.vectors = vecs
+                else:
+                    self.entries, self._by_key, self.vectors = [], {}, None
             except Exception:
-                self.vectors = None
+                self.entries, self._by_key, self.vectors = [], {}, None
+        elif self.entries:
+            self.entries, self._by_key = [], {}
 
     def _save(self):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,17 +150,31 @@ class AnswerCache:
             "fingerprint": corpus_fingerprint(),
             "created_at": int(time.time()),
         }
+        # entries 与 vectors 靠下标隐式对齐，一旦错位，语义命中会以 sim=1.0
+        # 返回**另一个问题**的答案——对健康产品来说这是最坏的一类缺陷。
+        # 所以没有向量就不写入：宁可这条不进缓存，也不能让整个缓存错位。
+        if query_vector is None:
+            return
+        vec = np.asarray(query_vector, dtype="float32")[None, :]
+        # 维度对不上说明换过向量后端，硬塞会让 np.vstack 直接抛异常，
+        # 而调用方的 try/except 会把它吞掉——表现成「写了但没写进去」。
+        if self.vectors is not None and self.vectors.shape[1] != vec.shape[1]:
+            return
+
         if key in self._by_key:
             idx = self._by_key[key]
             self.entries[idx] = row
-            if self.vectors is not None and query_vector is not None:
-                self.vectors[idx] = query_vector
+            if self.vectors is not None and idx < len(self.vectors):
+                self.vectors[idx] = vec[0]
         else:
             self.entries.append(row)
             self._by_key[key] = len(self.entries) - 1
-            if query_vector is not None:
-                vec = np.asarray(query_vector, dtype="float32")[None, :]
-                self.vectors = vec if self.vectors is None else np.vstack([self.vectors, vec])
+            self.vectors = vec if self.vectors is None else np.vstack([self.vectors, vec])
+
+        # 不变式：写完必须等长，否则整体作废重来，绝不带着错位继续服务。
+        if self.vectors is None or len(self.vectors) != len(self.entries):
+            self.entries, self._by_key, self.vectors = [], {}, None
+            return
         self._save()
 
     def __len__(self):

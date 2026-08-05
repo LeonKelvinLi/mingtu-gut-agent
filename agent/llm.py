@@ -227,7 +227,11 @@ def _ollama_chat(system, messages, max_tokens, fmt=None, think=False, fast=False
         "model": model,
         "stream": False,
         "think": think or os.environ.get("MINGTU_THINK", "").strip() in ("1", "true", "yes"),
-        "options": {"temperature": 0.2, "num_predict": max_tokens},
+        # 必须显式给 num_ctx：ollama 会按内存自行决定上下文长度（实测只给 2048），
+        # 超出部分从**前面**丢弃，于是整段系统提示词——人设、证据分级、引用规则、
+        # 合规红线——根本没进模型，而 HTTP 仍然 200、done_reason 仍然是 stop。
+        "options": {"temperature": 0.2, "num_predict": max_tokens,
+                    "num_ctx": int(os.environ.get("MINGTU_NUM_CTX", "16384"))},
         "messages": [{"role": "system", "content": system}] + _fold_system_into_user(messages),
     }
     if fmt:
