@@ -157,7 +157,9 @@ def build_agent(monkeypatch):
             return scripted.pop(0) if scripted else None
 
         monkeypatch.setattr(core, "generate", fake_generate)
-        return Agent(), sent
+        # 关掉答案缓存：否则 Agent 会载入生产缓存，命中后直接短路，
+        # 本文件想测的生成与校验逻辑根本不会执行。
+        return Agent(use_cache=False), sent
     return build
 
 

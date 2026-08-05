@@ -44,10 +44,12 @@ _MATERIAL = re.compile(
 
 
 class Agent:
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, use_cache=True):
         self.retriever = Retriever()
         self.system = build_system_prompt()
-        self.cache = AnswerCache()
+        # 可关闭：测试里必须能关掉，否则 Agent 会载入生产缓存，
+        # 命中后直接短路，被测的生成与校验逻辑根本不会执行。
+        self.cache = AnswerCache() if use_cache else None
         self.verbose = verbose
 
     # -- retrieval ----------------------------------------------------------
@@ -123,7 +125,7 @@ class Agent:
 
         # 2) 缓存。只对首轮提问生效：追问依赖上文，同样的字面问题在不同上下文里
         #    答案并不相同，用缓存回答追问会答非所问。
-        cacheable = (not history) and (not flags)
+        cacheable = bool(self.cache) and (not history) and (not flags)
         query_vector = None
         if cacheable:
             hit = self.cache.lookup_literal(query)
